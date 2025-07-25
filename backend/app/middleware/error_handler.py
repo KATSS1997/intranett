@@ -1,0 +1,1 @@
+# Tratamento global de erros
