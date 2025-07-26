@@ -8,9 +8,37 @@ from datetime import datetime
 import logging
 from typing import Dict, Any
 
-from ..auth.auth_service import auth_service
-from ..utils.responses import success_response, error_response
-from ..utils.validators import validate_login_data
+# Imports corrigidos (sem relativos)
+try:
+    from auth.auth_service import auth_service
+    from utils.responses import success_response, error_response
+    from utils.validators import validate_login_data
+except ImportError:
+    # Fallback se não encontrar os módulos
+    def success_response(data=None, message="Success"):
+        return jsonify({"success": True, "message": message, "data": data})
+    
+    def error_response(message="Error", code=400, error_code=None):
+        return jsonify({"success": False, "message": message, "error_code": error_code}), code
+    
+    def validate_login_data(cd_usuario, password, cd_multi_empresa):
+        if not cd_usuario: return "Usuário obrigatório"
+        if not password: return "Senha obrigatória" 
+        if not cd_multi_empresa: return "Empresa obrigatória"
+        return None
+    
+    # Mock simples se auth_service não estiver disponível
+    class MockAuthService:
+        def authenticate(self, cd_usuario, password, cd_multi_empresa):
+            return {
+                'success': False,
+                'error': 'Serviço de autenticação não disponível',
+                'code': 'SERVICE_UNAVAILABLE'
+            }
+        def verify_token(self, token): return None
+        def log_access(self, *args): pass
+    
+    auth_service = MockAuthService()
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +219,7 @@ def health_check():
     GET /api/auth/health
     """
     try:
-        from ..database import db
+        from database import db
         
         # Testa conexão com banco
         db_status = db.test_connection()

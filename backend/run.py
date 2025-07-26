@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
-Arquivo de execução do backend Flask
+Backend Flask com Oracle Real
 Caminho: backend/run.py
 """
 
 import os
+import sys
 import logging
 from flask import Flask
 from flask_cors import CORS
+
+# Adicionar o diretório app ao path do Python
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'app'))
 
 # Configurar logging
 logging.basicConfig(
@@ -27,49 +31,40 @@ def create_app():
     # CORS
     CORS(app, origins=["http://localhost:3000"])
     
-    # Importar e registrar blueprints
+    # Importar e inicializar Oracle
     try:
-        # Teste de conexão com Oracle
-        from app.database import db
-        from app.config import DatabaseConfig
+        from database import db
         
-        # Inicializar pool de conexões
+        # Inicializar pool de conexões Oracle
         db.initialize_pool()
         
         # Testar conexão
         if db.test_connection():
-            logger.info("✅ Conectado ao Oracle em %s", db.config.dsn)
+            logger.info("✅ Conectado ao Oracle: %s", db.config.dsn)
         else:
-            logger.error("❌ Falha na conexão Oracle")
+            logger.error("❌ Falha no teste de conexão Oracle")
             
     except Exception as e:
         logger.error("❌ Erro ao conectar Oracle: %s", e)
+        logger.error("🔧 Verifique se o Oracle Client está instalado e configurado")
     
     # Registrar rotas de auth
     try:
-        from app.routes.auth_routes import auth_bp
+        from routes.auth_routes import auth_bp
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
         logger.info("✅ Rotas de autenticação registradas")
         
     except Exception as e:
         logger.error("❌ Erro ao registrar rotas auth: %s", e)
     
-    # Registrar rotas de usuário (exemplo)
-    try:
-        from app.routes.user_routes import user_bp
-        app.register_blueprint(user_bp, url_prefix='/api/users')
-        logger.info("✅ Rotas de usuário registradas")
-        
-    except Exception as e:
-        logger.warning("⚠️ Rotas de usuário não encontradas: %s", e)
-    
-    # Rota de teste simples
+    # Rota de teste
     @app.route('/api/test')
     def test():
         return {
             'status': 'ok',
-            'message': 'Backend Flask funcionando!',
-            'version': '1.0.0'
+            'message': 'Backend Flask com Oracle funcionando!',
+            'version': '1.0.0',
+            'database': db.config.dsn if 'db' in locals() else 'não conectado'
         }
     
     # Health check
@@ -78,14 +73,16 @@ def create_app():
         try:
             db_status = db.test_connection() if 'db' in locals() else False
             return {
-                'status': 'healthy',
+                'status': 'healthy' if db_status else 'unhealthy',
                 'database': 'connected' if db_status else 'disconnected',
-                'message': 'API funcionando'
+                'dsn': db.config.dsn if 'db' in locals() else 'N/A',
+                'message': 'API funcionando com Oracle real'
             }
         except Exception as e:
             return {
                 'status': 'unhealthy',
-                'error': str(e)
+                'error': str(e),
+                'message': 'Erro na conexão Oracle'
             }, 500
     
     return app
@@ -94,13 +91,14 @@ if __name__ == '__main__':
     try:
         app = create_app()
         
-        print("\n" + "="*50)
-        print("🚀 INICIANDO BACKEND FLASK")
-        print("="*50)
+        print("\n" + "="*60)
+        print("🚀 INICIANDO BACKEND FLASK COM ORACLE")
+        print("="*60)
         print(f"📍 URL: http://localhost:5000")
         print(f"🔧 Debug: {app.config.get('DEBUG', False)}")
-        print(f"🔑 Secret Key: {'✅ Configurado' if app.config.get('SECRET_KEY') else '❌ Não configurado'}")
-        print("="*50 + "\n")
+        print(f"🗄️  Oracle: 192.168.0.9:1521/SMLMV")
+        print(f"👤 Usuário: dbamv")
+        print("="*60 + "\n")
         
         app.run(
             debug=True,

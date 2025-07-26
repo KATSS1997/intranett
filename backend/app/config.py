@@ -1,10 +1,16 @@
+"""
+Configuração Oracle com suas credenciais
+Caminho: backend/app/config.py
+"""
+
 import os
+import oracledb
 from dataclasses import dataclass
 from typing import Optional
 
 @dataclass
 class DatabaseConfig:
-    """Configuração centralizada do banco Oracle"""
+    """Configuração do banco Oracle"""
     username: str
     password: str
     dsn: str
@@ -20,18 +26,18 @@ class DatabaseConfig:
     
     @classmethod
     def from_env(cls) -> 'DatabaseConfig':
-        """Carrega configurações das variáveis de ambiente"""
+        """Carrega configurações (suas credenciais como padrão)"""
         return cls(
             username=os.getenv('DB_USER', 'dbamv'),
-            password=os.getenv('DB_PASSWORD', 'cmdmvfbg190918'),
-            dsn=os.getenv('DB_DSN', '172.16.10.7:1521/prd'),
+            password=os.getenv('DB_PASSWORD', 'dbamv'),
+            dsn=os.getenv('DB_DSN', '192.168.0.9:1521/SMLMV'),
             pool_min=int(os.getenv('ORACLE_POOL_MIN', 2)),
             pool_max=int(os.getenv('ORACLE_POOL_MAX', 10)),
             timeout=int(os.getenv('ORACLE_TIMEOUT', 30))
         )
     
     def validate(self) -> None:
-        """Valida se todas as configurações obrigatórias estão presentes"""
+        """Valida configurações"""
         if not self.username:
             raise ValueError("DB_USER é obrigatório")
         if not self.password:
@@ -41,7 +47,7 @@ class DatabaseConfig:
 
 @dataclass 
 class AppConfig:
-    """Configurações gerais da aplicação"""
+    """Configurações da aplicação"""
     secret_key: str
     jwt_expiration_hours: int = 24
     debug: bool = False
