@@ -1,5 +1,9 @@
+"""
+Serviço de autenticação integrado com Oracle Real
+Caminho: backend/app/auth/auth_service.py
+"""
+
 import jwt
-import hashlib
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
@@ -27,83 +31,81 @@ class AuthService:
     def __init__(self, app_config: AppConfig):
         self.app_config = app_config
     
-    def _hash_password(self, password: str) -> str:
-        """Hash da senha - ajuste conforme seu padrão no Oracle"""
-        # Exemplo genérico - substitua pela lógica do seu sistema
-        return hashlib.sha256(password.encode()).hexdigest()
-    
     def _validate_user_in_oracle(self, cd_usuario: str, password: str, cd_multi_empresa: int) -> Optional[UserData]:
         """Valida usuário/senha/empresa diretamente no Oracle"""
         try:
-            # Query para validar credenciais - AJUSTE CONFORME SUA ESTRUTURA
+            # Query para validar credenciais na estrutura real
             query = """
                 SELECT 
                     u.cd_usuario,
-                    u.nome_usuario,
-                    u.cd_multi_empresa,
-                    e.nome_empresa,
-                    u.perfil,
-                    u.ativo,
-                    u.ultimo_acesso
-                FROM usuarios u
-                INNER JOIN empresas e ON u.cd_multi_empresa = e.cd_multi_empresa
+                    u.nm_usuario as nome_usuario,
+                    :cd_multi_empresa as cd_multi_empresa,
+                    CASE 
+                        WHEN u.cd_papel IS NOT NULL THEN u.cd_papel
+                        ELSE 'user'
+                    END as perfil,
+                    u.sn_ativo as ativo,
+                    NULL as ultimo_acesso,
+                    'Empresa Padrão' as nome_empresa
+                FROM dbasgu.usuarios u
                 WHERE u.cd_usuario = :cd_usuario 
-                  AND u.password_hash = :password_hash
-                  AND u.cd_multi_empresa = :cd_multi_empresa
-                  AND u.ativo = 'S'
-                  AND e.ativo = 'S'
+                  AND u.cd_senha = :password
+                  AND u.sn_ativo = 'S'
+                  AND ROWNUM = 1
             """
             
             params = {
                 'cd_usuario': cd_usuario,
-                'password_hash': self._hash_password(password),
+                'password': password,  # Senha direta, sem hash
                 'cd_multi_empresa': cd_multi_empresa
             }
+            
+            logger.info(f"🔍 Validando usuário: {cd_usuario} na empresa {cd_multi_empresa}")
             
             result = db.execute_query(query, params)
             
             if not result:
-                logger.warning(f"Login inválido: usuário={cd_usuario}, empresa={cd_multi_empresa}")
+                logger.warning(f"❌ Login inválido: usuário={cd_usuario}, empresa={cd_multi_empresa}")
                 return None
             
             user_row = result[0]
             
-            # Atualiza último acesso
-            self._update_last_access(cd_usuario, cd_multi_empresa)
+            logger.info(f"✅ Usuário encontrado: {user_row['nome_usuario']}")
+            
+            # Registrar último acesso (opcional)
+            self._update_last_access(cd_usuario)
             
             return UserData(
                 cd_usuario=user_row['cd_usuario'],
                 nome_usuario=user_row['nome_usuario'],
                 cd_multi_empresa=user_row['cd_multi_empresa'],
                 nome_empresa=user_row['nome_empresa'],
-                perfil=user_row['perfil'],
+                perfil=str(user_row['perfil']) if user_row['perfil'] else 'user',
                 ativo=user_row['ativo'] == 'S',
                 ultimo_acesso=user_row['ultimo_acesso']
             )
             
         except Exception as e:
-            logger.error(f"Erro na validação do usuário: {e}")
+            logger.error(f"❌ Erro na validação do usuário: {e}")
             return None
     
-    def _update_last_access(self, cd_usuario: str, cd_multi_empresa: int) -> None:
-        """Atualiza timestamp do último acesso"""
+    def _update_last_access(self, cd_usuario: str) -> None:
+        """Atualiza timestamp do último acesso (opcional)"""
         try:
-            query = """
-                UPDATE usuarios 
-                SET ultimo_acesso = SYSDATE 
-                WHERE cd_usuario = :cd_usuario 
-                  AND cd_multi_empresa = :cd_multi_empresa
-            """
+            # Se tiver uma coluna de último acesso, pode descomentar:
+            # query = """
+            #     UPDATE dbasgu.usuarios 
+            #     SET ultimo_acesso = SYSDATE 
+            #     WHERE cd_usuario = :cd_usuario
+            # """
+            # 
+            # params = {'cd_usuario': cd_usuario}
+            # db.execute_dml(query, params)
             
-            params = {
-                'cd_usuario': cd_usuario,
-                'cd_multi_empresa': cd_multi_empresa
-            }
-            
-            db.execute_dml(query, params)
+            logger.debug(f"📝 Último acesso registrado para {cd_usuario}")
             
         except Exception as e:
-            logger.error(f"Erro ao atualizar último acesso: {e}")
+            logger.error(f"❌ Erro ao atualizar último acesso: {e}")
     
     def _generate_jwt_token(self, user_data: UserData) -> str:
         """Gera token JWT com dados do usuário"""
@@ -125,8 +127,8 @@ class AuthService:
         Autentica usuário e retorna token + dados
         
         Args:
-            cd_usuario: Código do usuário
-            password: Senha em texto plano
+            cd_usuario: Código do usuário (ex: F04601)
+            password: Senha (será comparada diretamente com CD_SENHA)
             cd_multi_empresa: Código da empresa
             
         Returns:
@@ -148,6 +150,8 @@ class AuthService:
                     'code': 'MISSING_COMPANY'
                 }
             
+            logger.info(f"🔐 Tentativa de login: {cd_usuario}@{cd_multi_empresa}")
+            
             # Valida no Oracle
             user_data = self._validate_user_in_oracle(cd_usuario, password, cd_multi_empresa)
             
@@ -161,7 +165,7 @@ class AuthService:
             # Gera token JWT
             token = self._generate_jwt_token(user_data)
             
-            logger.info(f"Login bem-sucedido: {cd_usuario}@{cd_multi_empresa}")
+            logger.info(f"✅ Login bem-sucedido: {cd_usuario} ({user_data.nome_usuario})")
             
             return {
                 'success': True,
@@ -177,7 +181,7 @@ class AuthService:
             }
             
         except Exception as e:
-            logger.error(f"Erro na autenticação: {e}")
+            logger.error(f"❌ Erro na autenticação: {e}")
             return {
                 'success': False,
                 'error': 'Erro interno do servidor',
@@ -190,36 +194,39 @@ class AuthService:
             payload = jwt.decode(token, self.app_config.secret_key, algorithms=['HS256'])
             return payload
         except jwt.ExpiredSignatureError:
-            logger.warning("Token expirado")
+            logger.warning("⚠️ Token expirado")
             return None
         except jwt.InvalidTokenError:
-            logger.warning("Token inválido")
+            logger.warning("⚠️ Token inválido")
             return None
     
     def log_access(self, cd_usuario: str, cd_multi_empresa: int, ip_address: str, user_agent: str) -> None:
-        """Registra log de acesso no Oracle"""
+        """Registra log de acesso (opcional - se tiver tabela de logs)"""
         try:
-            query = """
-                INSERT INTO logs_acesso (
-                    cd_usuario, cd_multi_empresa, ip_address, 
-                    user_agent, data_acesso
-                ) VALUES (
-                    :cd_usuario, :cd_multi_empresa, :ip_address,
-                    :user_agent, SYSDATE
-                )
-            """
+            # Se tiver tabela de logs, pode criar:
+            # query = """
+            #     INSERT INTO logs_acesso (
+            #         cd_usuario, cd_multi_empresa, ip_address, 
+            #         user_agent, data_acesso
+            #     ) VALUES (
+            #         :cd_usuario, :cd_multi_empresa, :ip_address,
+            #         :user_agent, SYSDATE
+            #     )
+            # """
+            # 
+            # params = {
+            #     'cd_usuario': cd_usuario,
+            #     'cd_multi_empresa': cd_multi_empresa,
+            #     'ip_address': ip_address,
+            #     'user_agent': user_agent
+            # }
+            # 
+            # db.execute_dml(query, params)
             
-            params = {
-                'cd_usuario': cd_usuario,
-                'cd_multi_empresa': cd_multi_empresa,
-                'ip_address': ip_address,
-                'user_agent': user_agent
-            }
-            
-            db.execute_dml(query, params)
+            logger.info(f"📝 Acesso registrado: {cd_usuario}@{cd_multi_empresa} de {ip_address}")
             
         except Exception as e:
-            logger.error(f"Erro ao registrar log de acesso: {e}")
+            logger.error(f"❌ Erro ao registrar log de acesso: {e}")
 
 # Instância do serviço
 auth_service = AuthService(AppConfig.from_env())
