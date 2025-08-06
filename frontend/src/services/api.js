@@ -233,4 +233,3 @@ export const clearAuth = () => {
 
 // Export da instância configurada
 export default api;
-export { api, apiMethods };

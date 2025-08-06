@@ -1,5 +1,6 @@
 """
-Serviço de autenticação integrado com Oracle Real
+Serviço de autenticação DEFINITIVO para Oracle MV2000
+Usa DBASGU.USUARIOS (que tem cd_senha) + DBAMV.USUARIOS (dados complementares)
 Caminho: backend/app/auth/auth_service.py
 """
 
@@ -26,86 +27,117 @@ class UserData:
     ultimo_acesso: Optional[datetime] = None
 
 class AuthService:
-    """Serviço de autenticação integrado com Oracle"""
+    """Serviço de autenticação integrado com Oracle MV2000"""
     
     def __init__(self, app_config: AppConfig):
         self.app_config = app_config
     
     def _validate_user_in_oracle(self, cd_usuario: str, password: str, cd_multi_empresa: int) -> Optional[UserData]:
-        """Valida usuário/senha/empresa diretamente no Oracle"""
+        """
+        Valida usuário/senha no Oracle MV2000
+        Usa DBASGU.USUARIOS para autenticação (tem cd_senha)
+        Busca dados complementares em DBAMV.USUARIOS se necessário
+        """
         try:
-            # Query para validar credenciais na estrutura real
-            query = """
+            logger.info(f"🔍 Validando usuário: {cd_usuario}")
+            
+            # QUERY PRINCIPAL: DBASGU.USUARIOS (tem cd_senha)
+            auth_query = """
                 SELECT 
                     u.cd_usuario,
-                    u.nm_usuario as nome_usuario,
-                    :cd_multi_empresa as cd_multi_empresa,
-                    CASE 
-                        WHEN u.cd_papel IS NOT NULL THEN u.cd_papel
-                        ELSE 'user'
-                    END as perfil,
-                    u.sn_ativo as ativo,
-                    NULL as ultimo_acesso,
-                    'Empresa Padrão' as nome_empresa
+                    u.nm_usuario,
+                    u.cd_senha,
+                    u.sn_ativo
                 FROM dbasgu.usuarios u
-                WHERE u.cd_usuario = :cd_usuario 
+                WHERE UPPER(u.cd_usuario) = UPPER(:cd_usuario)
                   AND u.cd_senha = :password
                   AND u.sn_ativo = 'S'
                   AND ROWNUM = 1
             """
             
             params = {
-                'cd_usuario': cd_usuario,
-                'password': password,  # Senha direta, sem hash
-                'cd_multi_empresa': cd_multi_empresa
+                'cd_usuario': cd_usuario.strip(),
+                'password': password.strip()
             }
             
-            logger.info(f"🔍 Validando usuário: {cd_usuario} na empresa {cd_multi_empresa}")
+            logger.debug(f"🔐 Executando autenticação para: {cd_usuario}")
             
-            result = db.execute_query(query, params)
+            result = db.execute_query(auth_query, params)
             
             if not result:
-                logger.warning(f"❌ Login inválido: usuário={cd_usuario}, empresa={cd_multi_empresa}")
+                logger.warning(f"❌ Credenciais inválidas para: {cd_usuario}")
                 return None
             
             user_row = result[0]
             
-            logger.info(f"✅ Usuário encontrado: {user_row['nome_usuario']}")
+            logger.info(f"✅ Usuário autenticado: {user_row['nm_usuario']} ({user_row['cd_usuario']})")
             
-            # Registrar último acesso (opcional)
+            # Busca dados complementares em DBAMV.USUARIOS (opcional)
+            complementary_data = self._get_complementary_user_data(cd_usuario)
+            
+            # Atualiza último acesso
             self._update_last_access(cd_usuario)
             
             return UserData(
                 cd_usuario=user_row['cd_usuario'],
-                nome_usuario=user_row['nome_usuario'],
-                cd_multi_empresa=user_row['cd_multi_empresa'],
-                nome_empresa=user_row['nome_empresa'],
-                perfil=str(user_row['perfil']) if user_row['perfil'] else 'user',
-                ativo=user_row['ativo'] == 'S',
-                ultimo_acesso=user_row['ultimo_acesso']
+                nome_usuario=user_row['nm_usuario'] or cd_usuario,
+                cd_multi_empresa=cd_multi_empresa,
+                nome_empresa=f"Empresa {cd_multi_empresa}",
+                perfil=complementary_data.get('perfil', 'user'),
+                ativo=user_row['sn_ativo'] == 'S',
+                ultimo_acesso=None
             )
             
         except Exception as e:
             logger.error(f"❌ Erro na validação do usuário: {e}")
             return None
     
-    def _update_last_access(self, cd_usuario: str) -> None:
-        """Atualiza timestamp do último acesso (opcional)"""
+    def _get_complementary_user_data(self, cd_usuario: str) -> Dict[str, Any]:
+        """Busca dados complementares em DBAMV.USUARIOS"""
         try:
-            # Se tiver uma coluna de último acesso, pode descomentar:
-            # query = """
-            #     UPDATE dbasgu.usuarios 
-            #     SET ultimo_acesso = SYSDATE 
-            #     WHERE cd_usuario = :cd_usuario
-            # """
-            # 
-            # params = {'cd_usuario': cd_usuario}
-            # db.execute_dml(query, params)
+            query = """
+                SELECT cd_usuario, nm_usuario, tp_acesso
+                FROM dbamv.usuarios 
+                WHERE UPPER(cd_usuario) = UPPER(:cd_usuario)
+                AND ROWNUM = 1
+            """
             
-            logger.debug(f"📝 Último acesso registrado para {cd_usuario}")
+            result = db.execute_query(query, {'cd_usuario': cd_usuario})
             
+            if result:
+                data = result[0]
+                logger.debug(f"📋 Dados complementares encontrados para {cd_usuario}: {data}")
+                return {
+                    'perfil': data.get('tp_acesso', 'user'),
+                    'nome_completo': data.get('nm_usuario')
+                }
+            else:
+                logger.debug(f"⚠️ Dados complementares não encontrados para {cd_usuario}")
+                return {}
+                
         except Exception as e:
-            logger.error(f"❌ Erro ao atualizar último acesso: {e}")
+            logger.debug(f"⚠️ Erro ao buscar dados complementares: {e}")
+            return {}
+    
+    def _update_last_access(self, cd_usuario: str) -> None:
+        """Atualiza último acesso (se existir campo dt_ultimo_acesso)"""
+        try:
+            # Tenta atualizar em DBASGU.USUARIOS
+            update_query = """
+                UPDATE dbasgu.usuarios 
+                SET dt_ultimo_acesso = SYSDATE 
+                WHERE cd_usuario = :cd_usuario
+            """
+            
+            affected = db.execute_dml(update_query, {'cd_usuario': cd_usuario})
+            
+            if affected > 0:
+                logger.debug(f"📝 Último acesso atualizado: {cd_usuario}")
+            else:
+                logger.debug(f"⚠️ Campo dt_ultimo_acesso pode não existir para: {cd_usuario}")
+                
+        except Exception as e:
+            logger.debug(f"⚠️ Não foi possível atualizar último acesso: {e}")
     
     def _generate_jwt_token(self, user_data: UserData) -> str:
         """Gera token JWT com dados do usuário"""
@@ -124,11 +156,11 @@ class AuthService:
     
     def authenticate(self, cd_usuario: str, password: str, cd_multi_empresa: int) -> Dict[str, Any]:
         """
-        Autentica usuário e retorna token + dados
+        Autentica usuário no MV2000 e retorna token + dados
         
         Args:
-            cd_usuario: Código do usuário (ex: F04601)
-            password: Senha (será comparada diretamente com CD_SENHA)
+            cd_usuario: Código do usuário (ex: F04821, DBAMV)
+            password: Senha (comparação direta com CD_SENHA do DBASGU.USUARIOS)
             cd_multi_empresa: Código da empresa
             
         Returns:
@@ -137,6 +169,7 @@ class AuthService:
         try:
             # Validações básicas
             if not cd_usuario or not password:
+                logger.warning("❌ Login sem credenciais")
                 return {
                     'success': False,
                     'error': 'Usuário e senha são obrigatórios',
@@ -144,6 +177,7 @@ class AuthService:
                 }
             
             if not cd_multi_empresa:
+                logger.warning("❌ Login sem empresa")
                 return {
                     'success': False,
                     'error': 'Empresa é obrigatória',
@@ -156,6 +190,7 @@ class AuthService:
             user_data = self._validate_user_in_oracle(cd_usuario, password, cd_multi_empresa)
             
             if not user_data:
+                logger.warning(f"❌ Login inválido: {cd_usuario}@{cd_multi_empresa}")
                 return {
                     'success': False,
                     'error': 'Credenciais inválidas ou usuário inativo',
@@ -201,29 +236,10 @@ class AuthService:
             return None
     
     def log_access(self, cd_usuario: str, cd_multi_empresa: int, ip_address: str, user_agent: str) -> None:
-        """Registra log de acesso (opcional - se tiver tabela de logs)"""
+        """Registra log de acesso"""
         try:
-            # Se tiver tabela de logs, pode criar:
-            # query = """
-            #     INSERT INTO logs_acesso (
-            #         cd_usuario, cd_multi_empresa, ip_address, 
-            #         user_agent, data_acesso
-            #     ) VALUES (
-            #         :cd_usuario, :cd_multi_empresa, :ip_address,
-            #         :user_agent, SYSDATE
-            #     )
-            # """
-            # 
-            # params = {
-            #     'cd_usuario': cd_usuario,
-            #     'cd_multi_empresa': cd_multi_empresa,
-            #     'ip_address': ip_address,
-            #     'user_agent': user_agent
-            # }
-            # 
-            # db.execute_dml(query, params)
-            
             logger.info(f"📝 Acesso registrado: {cd_usuario}@{cd_multi_empresa} de {ip_address}")
+            # Log em arquivo é suficiente por enquanto
             
         except Exception as e:
             logger.error(f"❌ Erro ao registrar log de acesso: {e}")
