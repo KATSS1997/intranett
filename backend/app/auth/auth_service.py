@@ -1,5 +1,5 @@
 """
-Serviço de autenticação integrado com Oracle - SENHA EM TEXTO PLANO
+Serviço de autenticação integrado com Oracle - VERSÃO COMPLETA CORRIGIDA
 Caminho: backend/app/auth/auth_service.py
 """
 
@@ -33,59 +33,88 @@ class AuthService:
     
     def _validate_user_in_oracle(self, cd_usuario: str, password: str, cd_multi_empresa: int) -> Optional[UserData]:
         """
-        Valida usuário/senha/empresa diretamente no Oracle
-        COMPARAÇÃO DIRETA - SEM HASH
+        Valida usuário/senha/empresa diretamente no Oracle - VERSÃO SIMPLIFICADA
         """
         try:
-            # Query para validar credenciais na estrutura real
+            logger.info(f"🔍 Validando usuário: {cd_usuario} na empresa {cd_multi_empresa}")
+            
+            # ✅ QUERY MAIS SIMPLES POSSÍVEL - Sem problemas de tipo
             query = """
                 SELECT 
-                    u.cd_usuario,
-                    u.nm_usuario as nome_usuario,
-                    :cd_multi_empresa as cd_multi_empresa,
-                    CASE 
-                        WHEN u.cd_papel IS NOT NULL THEN u.cd_papel
-                        ELSE 'user'
-                    END as perfil,
-                    u.sn_ativo as ativo,
-                    NULL as ultimo_acesso,
-                    me.nm_razao_social as nome_empresa
-                FROM dbasgu.usuarios u
-                LEFT JOIN dbamv.multi_empresas me ON me.cd_multi_empresa = :cd_multi_empresa
-                WHERE UPPER(u.cd_usuario) = UPPER(:cd_usuario)
-                  AND u.cd_senha = :password
-                  AND u.sn_ativo = 'S'
+                    cd_usuario,
+                    nm_usuario,
+                    cd_papel,
+                    sn_ativo,
+                    cd_senha
+                FROM dbasgu.usuarios
+                WHERE UPPER(cd_usuario) = UPPER(:cd_usuario)
                   AND ROWNUM = 1
             """
             
             params = {
-                'cd_usuario': cd_usuario,
-                'password': password,  # Senha direta, sem hash
-                'cd_multi_empresa': cd_multi_empresa
+                'cd_usuario': cd_usuario
             }
             
-            logger.info(f"🔍 Validando usuário: {cd_usuario} na empresa {cd_multi_empresa}")
-            
+            logger.info("🔍 Executando query de verificação de usuário...")
             result = db.execute_query(query, params)
             
             if not result:
-                logger.warning(f"❌ Credenciais inválidas para usuário: {cd_usuario}")
+                logger.warning(f"❌ Usuário {cd_usuario} não encontrado na base")
                 return None
             
-            row = result[0]
+            # ✅ ACESSO SEGURO AOS DADOS - Trata tanto lista quanto dicionário
+            user_row = result[0]
+            logger.info(f"🔍 Query retornou {len(user_row)} campos")
+            logger.info(f"🔍 Dados do usuário: {user_row}")
             
-            # Criar objeto UserData
+            # ✅ DETECTA SE É DICIONÁRIO OU LISTA
+            if isinstance(user_row, dict):
+                # Resultado como dicionário
+                cd_usuario_db = user_row.get('cd_usuario') or user_row.get('CD_USUARIO') or cd_usuario
+                nm_usuario_db = user_row.get('nm_usuario') or user_row.get('NM_USUARIO') or cd_usuario
+                cd_papel_db = user_row.get('cd_papel') or user_row.get('CD_PAPEL') or 'user'
+                sn_ativo_db = user_row.get('sn_ativo') or user_row.get('SN_ATIVO') or 'N'
+                cd_senha_db = user_row.get('cd_senha') or user_row.get('CD_SENHA')
+            else:
+                # Resultado como lista/tupla
+                cd_usuario_db = user_row[0] if len(user_row) > 0 else cd_usuario
+                nm_usuario_db = user_row[1] if len(user_row) > 1 else cd_usuario
+                cd_papel_db = user_row[2] if len(user_row) > 2 else 'user'
+                sn_ativo_db = user_row[3] if len(user_row) > 3 else 'N'
+                cd_senha_db = user_row[4] if len(user_row) > 4 else None
+            
+            logger.info(f"✅ Usuário encontrado: {cd_usuario_db}")
+            logger.info(f"👤 Nome: {nm_usuario_db}")
+            logger.info(f"🎭 Perfil: {cd_papel_db}")
+            logger.info(f"📋 Status: {sn_ativo_db}")
+            logger.info(f"🔑 Senha DB: '{cd_senha_db}' | Fornecida: '{password}'")
+            
+            # ✅ VALIDAÇÕES
+            if sn_ativo_db != 'S':
+                logger.warning(f"❌ Usuário {cd_usuario} está inativo: {sn_ativo_db}")
+                return None
+            
+            if cd_senha_db is None:
+                logger.warning(f"❌ Usuário {cd_usuario} não tem senha definida")
+                return None
+                
+            if str(cd_senha_db).strip() != str(password).strip():
+                logger.warning(f"❌ Senha incorreta para usuário {cd_usuario}")
+                logger.warning(f"🔍 Esperado: '{cd_senha_db}' | Recebido: '{password}'")
+                return None
+            
+            # ✅ CRIAR OBJETO USERDATA
             user_data = UserData(
-                cd_usuario=row[0],
-                nome_usuario=row[1] or cd_usuario,  # Fallback se nome for null
-                cd_multi_empresa=row[2],
-                nome_empresa=row[6] or f"Empresa {cd_multi_empresa}",  # Fallback se nome empresa for null
-                perfil=row[3] or 'user',
-                ativo=row[4] == 'S',
+                cd_usuario=cd_usuario_db,
+                nome_usuario=nm_usuario_db or cd_usuario_db,
+                cd_multi_empresa=cd_multi_empresa,
+                nome_empresa=f"Empresa {cd_multi_empresa}",
+                perfil=cd_papel_db or 'user',
+                ativo=True,
                 ultimo_acesso=None
             )
             
-            logger.info(f"✅ Usuário validado: {cd_usuario} ({user_data.nome_usuario})")
+            logger.info(f"✅ Validação bem-sucedida para usuário: {cd_usuario_db}")
             return user_data
             
         except Exception as e:
@@ -112,14 +141,6 @@ class AuthService:
     def authenticate(self, cd_usuario: str, password: str, cd_multi_empresa: int) -> Dict[str, Any]:
         """
         Autentica usuário e retorna token + dados
-        
-        Args:
-            cd_usuario: Código do usuário (ex: F04601)
-            password: Senha em texto plano (comparação direta)
-            cd_multi_empresa: Código da empresa
-            
-        Returns:
-            Dict com success, token, user_data ou error
         """
         try:
             # Validações básicas
@@ -139,7 +160,7 @@ class AuthService:
             
             logger.info(f"🔐 Tentativa de login: {cd_usuario}@{cd_multi_empresa}")
             
-            # Valida no Oracle COM TEXTO PLANO
+            # Valida no Oracle
             user_data = self._validate_user_in_oracle(cd_usuario, password, cd_multi_empresa)
             
             if not user_data:
@@ -158,10 +179,10 @@ class AuthService:
                 'success': True,
                 'token': token,
                 'user': {
-                    'cdUsuario': user_data.cd_usuario,
-                    'nomeUsuario': user_data.nome_usuario,
-                    'cdMultiEmpresa': user_data.cd_multi_empresa,
-                    'nomeEmpresa': user_data.nome_empresa,
+                    'cd_usuario': user_data.cd_usuario,        
+                    'nome_usuario': user_data.nome_usuario,    
+                    'cd_multi_empresa': user_data.cd_multi_empresa,
+                    'nome_empresa': user_data.nome_empresa,
                     'perfil': user_data.perfil
                 }
             }

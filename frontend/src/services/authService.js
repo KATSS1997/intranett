@@ -1,5 +1,5 @@
 /**
- * Serviço de Autenticação Frontend
+ * Serviço de Autenticação Frontend - VERSÃO CORRIGIDA
  * Caminho: frontend/src/services/authService.js
  */
 
@@ -24,11 +24,11 @@ class AuthService {
     try {
       console.log('🔐 AuthService: Iniciando login...', { cdUsuario, cdMultiEmpresa });
 
-      // ✅ Chama o backend real
+      // ✅ CORREÇÃO: Campos com nomes corretos (camelCase)
       const response = await api.post('/auth/login', {
-        cd_usuario: cdUsuario,
-        password: password,
-        cd_multi_empresa: cdMultiEmpresa
+        cdUsuario: cdUsuario,           // ✅ CORRETO - sem underscore
+        password: password,             // ✅ CORRETO
+        cdMultiEmpresa: cdMultiEmpresa  // ✅ CORRETO - sem underscore
       });
 
       console.log('📨 Resposta do backend:', response.data);
@@ -40,7 +40,7 @@ class AuthService {
         this.setToken(token);
         this.setUser(user);
 
-        console.log('✅ Login bem-sucedido:', user.nome_usuario);
+        console.log('✅ Login bem-sucedido:', user.nome_usuario || user.cd_usuario);
 
         return {
           success: true,
@@ -66,6 +66,8 @@ class AuthService {
         const status = error.response.status;
         const data = error.response.data;
 
+        console.log('🔍 Status do erro:', status, 'Data:', data);
+
         switch (status) {
           case 400:
             errorMessage = data.message || 'Dados inválidos';
@@ -85,6 +87,11 @@ class AuthService {
       } else if (error.request) {
         // Erro de rede
         errorMessage = 'Erro de conexão. Verifique se o servidor está online.';
+        console.log('🌐 Erro de rede:', error.request);
+      } else {
+        // Erro na configuração da requisição
+        errorMessage = error.message || 'Erro na configuração da requisição';
+        console.log('⚙️ Erro de configuração:', error.message);
       }
 
       return {
@@ -153,7 +160,7 @@ class AuthService {
         // Atualiza dados do usuário
         this.setUser(user);
 
-        console.log('✅ Token válido:', user.nome_usuario);
+        console.log('✅ Token válido:', user.nome_usuario || user.cd_usuario);
 
         return {
           valid: true,
