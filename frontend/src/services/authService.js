@@ -1,238 +1,304 @@
 /**
- * Serviço de Autenticação - COMPATÍVEL COM SEU CÓDIGO
+ * Serviço de Autenticação Frontend
  * Caminho: frontend/src/services/authService.js
  */
 
-import http from './httpService';
+import api from './api';
 
-const authService = {
-    /**
-     * Login - EXATAMENTE como seu código TypeScript
-     * @param {string} usuario - Código do usuário
-     * @param {string} senha - Senha em texto plano
-     * @param {number} empresa - Código da empresa
-     * @returns {Promise<any>} - Resposta da API ou erro
-     */
-    login: async (usuario, senha, empresa) => {
-        try {
-            const vDadosLogin = {
-                cdUsuario: `${usuario}`,
-                password: `${senha}`,
-                cdMultiEmpresa: empresa,
-            };
-
-            console.log(vDadosLogin);
-            const response = await http.post("/auth/login", vDadosLogin);
-            console.log("data", response.data);
-            
-            // Se login bem-sucedido, salvar dados
-            if (response.data.success) {
-                const { token, user } = response.data.data;
-                
-                // Salvar no localStorage
-                localStorage.setItem('token', token);
-                localStorage.setItem('user', JSON.stringify(user));
-                
-                console.log('✅ Login bem-sucedido, dados salvos:', user);
-            }
-            
-            return response.data;
-        } catch (error) {
-            console.log("error", error);
-            
-            // Retornar erro em formato padronizado
-            if (error.response && error.response.data) {
-                return {
-                    success: false,
-                    message: error.response.data.message || 'Erro na autenticação',
-                    error_code: error.response.data.error_code
-                };
-            }
-            
-            return {
-                success: false,
-                message: error.message || 'Erro de conexão',
-                error_code: 'NETWORK_ERROR'
-            };
-        }
-    },
-
-    /**
-     * Logout do usuário
-     * @returns {Promise<boolean>}
-     */
-    logout: async () => {
-        try {
-            // Tentar notificar o servidor
-            await http.post("/auth/logout", {});
-        } catch (error) {
-            console.warn('⚠️ Erro ao notificar logout no servidor:', error);
-        } finally {
-            // Limpar dados locais sempre
-            localStorage.removeItem('token');
-            localStorage.removeItem('user');
-            console.log('👋 Logout realizado');
-            return true;
-        }
-    },
-
-    /**
-     * Verifica se o usuário está autenticado
-     * @returns {boolean}
-     */
-    isAuthenticated: () => {
-        const token = localStorage.getItem('token');
-        const user = localStorage.getItem('user');
-        return !!(token && user);
-    },
-
-    /**
-     * Obtém dados do usuário atual
-     * @returns {object|null}
-     */
-    getCurrentUser: () => {
-        try {
-            const userData = localStorage.getItem('user');
-            return userData ? JSON.parse(userData) : null;
-        } catch (error) {
-            console.error('❌ Erro ao parsear dados do usuário:', error);
-            return null;
-        }
-    },
-
-    /**
-     * Obtém o token atual
-     * @returns {string|null}
-     */
-    getToken: () => {
-        return localStorage.getItem('token');
-    },
-
-    /**
-     * Verifica se o token é válido (chama API)
-     * @returns {Promise<boolean>}
-     */
-    verifyToken: async () => {
-        try {
-            const response = await http.post("/auth/verify", {});
-            
-            if (response.data.success) {
-                // Atualizar dados do usuário se necessário
-                const { user } = response.data.data;
-                localStorage.setItem('user', JSON.stringify(user));
-                return true;
-            }
-            
-            return false;
-        } catch (error) {
-            console.warn('❌ Token inválido:', error);
-            // Limpar dados se token for inválido
-            authService.logout();
-            return false;
-        }
-    },
-
-    /**
-     * Renova o token JWT
-     * @returns {Promise<boolean>}
-     */
-    refreshToken: async () => {
-        try {
-            const response = await http.post("/auth/refresh", {});
-            
-            if (response.data.success) {
-                const { token } = response.data.data;
-                localStorage.setItem('token', token);
-                console.log('✅ Token renovado com sucesso');
-                return true;
-            }
-            
-            return false;
-        } catch (error) {
-            console.warn('❌ Erro ao renovar token:', error);
-            return false;
-        }
-    },
-
-    /**
-     * Interceptor para requisições autenticadas
-     * Adiciona token automaticamente e tenta renovar se expirado
-     * @param {string} endpoint - Endpoint da API
-     * @param {object} data - Dados para enviar
-     * @param {string} method - Método HTTP (GET, POST, etc.)
-     * @returns {Promise<any>}
-     */
-    authenticatedRequest: async (endpoint, data = null, method = 'GET') => {
-        try {
-            let response;
-            
-            switch (method.toUpperCase()) {
-                case 'POST':
-                    response = await http.post(endpoint, data);
-                    break;
-                case 'GET':
-                    response = await http.get(endpoint);
-                    break;
-                case 'PUT':
-                    response = await http.put(endpoint, data);
-                    break;
-                case 'DELETE':
-                    response = await http.delete(endpoint);
-                    break;
-                default:
-                    throw new Error(`Método ${method} não suportado`);
-            }
-            
-            return response;
-            
-        } catch (error) {
-            // Se token expirou (401), tentar renovar
-            if (error.response && error.response.status === 401) {
-                console.log('🔄 Token expirado, tentando renovar...');
-                
-                const renewed = await authService.refreshToken();
-                if (renewed) {
-                    // Tentar novamente com token renovado
-                    console.log('🔄 Tentando requisição novamente...');
-                    return await authService.authenticatedRequest(endpoint, data, method);
-                } else {
-                    // Não conseguiu renovar, fazer logout
-                    console.log('❌ Não foi possível renovar token, redirecionando para login...');
-                    await authService.logout();
-                    // Redirecionar para login se necessário
-                    window.location.href = '/login';
-                }
-            }
-            
-            throw error;
-        }
-    },
-
-    /**
-     * Utilitário para validar dados de login
-     * @param {string} usuario - Código do usuário
-     * @param {string} senha - Senha
-     * @param {number} empresa - Código da empresa
-     * @returns {string|null} - Mensagem de erro ou null se válido
-     */
-    validateLoginData: (usuario, senha, empresa) => {
-        if (!usuario || !usuario.trim()) {
-            return 'Código do usuário é obrigatório';
-        }
-        
-        if (!senha || !senha.trim()) {
-            return 'Senha é obrigatória';
-        }
-        
-        if (!empresa || empresa <= 0) {
-            return 'Código da empresa é obrigatório';
-        }
-        
-        return null; // Dados válidos
-    }
+// Constantes
+const STORAGE_KEYS = {
+  TOKEN: 'auth_token',
+  USER: 'user_data'
 };
 
-export default authService;
+class AuthService {
+  
+  /**
+   * Realiza login no backend
+   * @param {string} cdUsuario - Código do usuário
+   * @param {string} password - Senha
+   * @param {number} cdMultiEmpresa - Código da empresa
+   * @returns {Promise<Object>} Resultado do login
+   */
+  async login(cdUsuario, password, cdMultiEmpresa) {
+    try {
+      console.log('🔐 AuthService: Iniciando login...', { cdUsuario, cdMultiEmpresa });
 
-// Export nomeado para compatibilidade
-export { authService };
+      // ✅ Chama o backend real
+      const response = await api.post('/auth/login', {
+        cd_usuario: cdUsuario,
+        password: password,
+        cd_multi_empresa: cdMultiEmpresa
+      });
+
+      console.log('📨 Resposta do backend:', response.data);
+
+      if (response.data.success) {
+        const { user, token } = response.data.data;
+
+        // ✅ Salva no localStorage
+        this.setToken(token);
+        this.setUser(user);
+
+        console.log('✅ Login bem-sucedido:', user.nome_usuario);
+
+        return {
+          success: true,
+          user: user,
+          token: token
+        };
+      } else {
+        console.warn('❌ Login falhou:', response.data.message);
+        return {
+          success: false,
+          error: response.data.message || 'Credenciais inválidas'
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Erro no login:', error);
+
+      let errorMessage = 'Erro de conexão com o servidor';
+
+      // Tratamento específico de erros
+      if (error.response) {
+        // Erro HTTP (400, 401, 500, etc.)
+        const status = error.response.status;
+        const data = error.response.data;
+
+        switch (status) {
+          case 400:
+            errorMessage = data.message || 'Dados inválidos';
+            break;
+          case 401:
+            errorMessage = data.message || 'Usuário, senha ou empresa incorretos';
+            break;
+          case 403:
+            errorMessage = 'Acesso negado';
+            break;
+          case 500:
+            errorMessage = 'Erro interno do servidor';
+            break;
+          default:
+            errorMessage = data.message || `Erro ${status}`;
+        }
+      } else if (error.request) {
+        // Erro de rede
+        errorMessage = 'Erro de conexão. Verifique se o servidor está online.';
+      }
+
+      return {
+        success: false,
+        error: errorMessage
+      };
+    }
+  }
+
+  /**
+   * Realiza logout
+   * @returns {Promise<Object>} Resultado do logout
+   */
+  async logout() {
+    try {
+      console.log('🚪 AuthService: Fazendo logout...');
+
+      // ✅ Chama o endpoint de logout (opcional)
+      try {
+        await api.post('/auth/logout');
+      } catch (error) {
+        console.warn('⚠️ Erro ao notificar logout no backend:', error.message);
+        // Continua o logout local mesmo com erro no backend
+      }
+
+      // ✅ Remove dados locais
+      this.clearAuth();
+
+      console.log('✅ Logout realizado com sucesso');
+
+      return { success: true };
+
+    } catch (error) {
+      console.error('❌ Erro no logout:', error);
+
+      // Force logout local mesmo com erro
+      this.clearAuth();
+
+      return {
+        success: false,
+        error: 'Erro durante logout, mas dados locais foram removidos'
+      };
+    }
+  }
+
+  /**
+   * Verifica se o token ainda é válido
+   * @returns {Promise<Object>} Resultado da verificação
+   */
+  async verifyToken() {
+    try {
+      const token = this.getToken();
+
+      if (!token) {
+        return { valid: false, error: 'Token não encontrado' };
+      }
+
+      console.log('🔍 Verificando token...');
+
+      // ✅ Chama o endpoint de verificação
+      const response = await api.post('/auth/verify');
+
+      if (response.data.success) {
+        const { user } = response.data.data;
+
+        // Atualiza dados do usuário
+        this.setUser(user);
+
+        console.log('✅ Token válido:', user.nome_usuario);
+
+        return {
+          valid: true,
+          user: user
+        };
+      } else {
+        console.warn('❌ Token inválido:', response.data.message);
+        this.clearAuth();
+
+        return {
+          valid: false,
+          error: response.data.message || 'Token inválido'
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Erro na verificação do token:', error);
+      this.clearAuth();
+
+      return {
+        valid: false,
+        error: 'Erro ao verificar token'
+      };
+    }
+  }
+
+  /**
+   * Salva o token no localStorage
+   * @param {string} token - Token JWT
+   */
+  setToken(token) {
+    localStorage.setItem(STORAGE_KEYS.TOKEN, token);
+    
+    // ✅ Configura token no header da API
+    api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  }
+
+  /**
+   * Obtém o token do localStorage
+   * @returns {string|null} Token ou null
+   */
+  getToken() {
+    return localStorage.getItem(STORAGE_KEYS.TOKEN);
+  }
+
+  /**
+   * Salva dados do usuário no localStorage
+   * @param {Object} user - Dados do usuário
+   */
+  setUser(user) {
+    localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
+  }
+
+  /**
+   * Obtém dados do usuário do localStorage
+   * @returns {Object|null} Usuário ou null
+   */
+  getUser() {
+    try {
+      const userData = localStorage.getItem(STORAGE_KEYS.USER);
+      return userData ? JSON.parse(userData) : null;
+    } catch (error) {
+      console.error('Erro ao parsear dados do usuário:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Remove todos os dados de autenticação
+   */
+  clearAuth() {
+    localStorage.removeItem(STORAGE_KEYS.TOKEN);
+    localStorage.removeItem(STORAGE_KEYS.USER);
+    
+    // ✅ Remove token do header da API
+    delete api.defaults.headers.common['Authorization'];
+  }
+
+  /**
+   * Verifica se o usuário está autenticado
+   * @returns {boolean} True se autenticado
+   */
+  isAuthenticated() {
+    const token = this.getToken();
+    const user = this.getUser();
+    
+    return !!(token && user);
+  }
+
+  /**
+   * Inicializa o serviço (configura token se existir)
+   */
+  initialize() {
+    const token = this.getToken();
+    
+    if (token) {
+      // ✅ Configura token no header da API
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      console.log('🔧 Token configurado no header da API');
+    }
+  }
+
+  /**
+   * Atualiza dados do perfil do usuário
+   * @param {Object} profileData - Novos dados do perfil
+   * @returns {Promise<Object>} Resultado da atualização
+   */
+  async updateProfile(profileData) {
+    try {
+      console.log('📝 Atualizando perfil...');
+
+      const response = await api.put('/users/profile', profileData);
+
+      if (response.data.success) {
+        const { user } = response.data.data;
+        
+        // Atualiza dados locais
+        this.setUser(user);
+
+        console.log('✅ Perfil atualizado com sucesso');
+
+        return {
+          success: true,
+          user: user
+        };
+      } else {
+        return {
+          success: false,
+          error: response.data.message || 'Erro ao atualizar perfil'
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Erro ao atualizar perfil:', error);
+
+      return {
+        success: false,
+        error: error.response?.data?.message || 'Erro ao atualizar perfil'
+      };
+    }
+  }
+}
+
+// ✅ Cria instância única e inicializa
+const authService = new AuthService();
+authService.initialize();
+
+export default authService;

@@ -25,8 +25,8 @@ const LoginPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [formData, setFormData] = useState({
-    cdUsuario: 'DBAMV',
-    password: 'cmdmvfbg190918',
+    cdUsuario: '',
+    password: '',
     cdMultiEmpresa: 1
   });
   const [loading, setLoading] = useState(false);

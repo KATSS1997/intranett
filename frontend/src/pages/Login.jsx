@@ -1,51 +1,76 @@
 /**
- * Componente de Login - VERSÃO CORRIGIDA
- * Caminho: frontend/src/components/Login.jsx
+ * Página de Login CORRIGIDA - Sem reload
+ * Caminho: C:\intranet\frontend\src\pages\Login.jsx
  */
 
-import { useState } from 'react';
+import React, { useState } from 'react';
+// Ajustar import conforme sua estrutura
 import authService from '../services/authService';
+// ou pode ser:
+// import authService from '../services/auth';
 
-const Login = ({ onLoginSuccess }) => {
+const Login = () => {
     const [formData, setFormData] = useState({
-        cdUsuario: '',
-        password: '',
-        cdMultiEmpresa: 1
+        usuario: '',           // Campo vazio
+        senha: '',
+        empresa: 1
     });
     
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
-    const [showPassword, setShowPassword] = useState(false);
 
-    const handleChange = (e) => {
+    const handleInputChange = (e) => {
         const { name, value } = e.target;
+        
+        console.log(`📝 Campo alterado: ${name} = ${value}`);
+        
         setFormData(prev => ({
             ...prev,
-            [name]: value
+            [name]: name === 'empresa' ? parseInt(value) || 1 : value
         }));
         
         // Limpar erro ao digitar
-        if (error) {
-            setError('');
-        }
+        if (error) setError('');
     };
 
-    const handleSubmit = async (e) => {
+    const handleLoginSubmit = async (e) => {
+        // 🚨 CRÍTICO: Prevenir reload da página
         e.preventDefault();
+        e.stopPropagation();
         
+        console.log('🔐 === INICIANDO LOGIN ===');
+        console.log('📋 Dados do formulário:', {
+            usuario: formData.usuario,
+            empresa: formData.empresa,
+            senhaLength: formData.senha?.length || 0
+        });
+
         // Validação básica
-        if (!formData.cdUsuario.trim()) {
-            setError('Código do usuário é obrigatório');
+        const validation = authService.validateLoginData?.(
+            formData.usuario, 
+            formData.senha, 
+            formData.empresa
+        );
+        
+        if (validation) {
+            console.log('❌ Validação falhou:', validation);
+            setError(validation);
+            return;
+        }
+
+        // Validação manual se authService.validateLoginData não existir
+        if (!formData.usuario?.trim()) {
+            setError('Usuário é obrigatório');
             return;
         }
         
-        if (!formData.password.trim()) {
+        if (!formData.senha?.trim()) {
             setError('Senha é obrigatória');
             return;
         }
 
-        if (!formData.cdMultiEmpresa) {
-            setError('Código da empresa é obrigatório');
+        if (!formData.empresa || formData.empresa <= 0) {
+            setError('Empresa deve ser um número válido');
             return;
         }
 
@@ -53,115 +78,141 @@ const Login = ({ onLoginSuccess }) => {
         setError('');
 
         try {
-            console.log('🔐 Tentando login com dados:', {
-                cdUsuario: formData.cdUsuario,
-                cdMultiEmpresa: formData.cdMultiEmpresa
-            });
-
+            console.log('📡 Chamando authService.login...');
+            
+            // Usar EXATAMENTE como seu código original:
             const result = await authService.login(
-                formData.cdUsuario,
-                formData.password,
-                formData.cdMultiEmpresa
+                formData.usuario,    // usuario: string
+                formData.senha,      // senha: string  
+                formData.empresa     // empresa: number
             );
 
-            if (result.success) {
-                console.log('✅ Login bem-sucedido!');
+            console.log('📋 Resultado completo do login:', result);
+
+            // Verificar se login foi bem-sucedido
+            if (result && result.success === true) {
+                console.log('✅ LOGIN BEM-SUCEDIDO!');
+                console.log('🎫 Token recebido:', result.data?.token?.substring(0, 20) + '...');
+                console.log('👤 Dados do usuário:', result.data?.user);
                 
-                // Callback de sucesso
-                if (onLoginSuccess) {
-                    onLoginSuccess(result.data.user);
+                // Salvar no localStorage (se authService não fizer automaticamente)
+                if (result.data?.token) {
+                    localStorage.setItem('token', result.data.token);
+                }
+                if (result.data?.user) {
+                    localStorage.setItem('user', JSON.stringify(result.data.user));
                 }
                 
-                // Opcional: redirecionamento pode ser feito pelo componente pai
-                // window.location.href = '/dashboard';
+                // Redirecionar para dashboard
+                console.log('🔄 Redirecionando para dashboard...');
+                
+                // Opção 1: Redirect direto
+                window.location.href = '/dashboard';
+                
+                // Opção 2: Se usar React Router, descomente:
+                // navigate('/dashboard');
                 
             } else {
-                console.warn('❌ Login falhou:', result.message);
-                setError(result.message || 'Credenciais inválidas');
+                // Login falhou
+                const errorMsg = result?.message || 'Credenciais inválidas';
+                console.warn('❌ Login falhou:', errorMsg);
+                console.warn('🔍 Detalhes do erro:', result);
+                setError(errorMsg);
             }
 
         } catch (error) {
-            console.error('❌ Erro inesperado no login:', error);
-            setError('Erro inesperado. Tente novamente.');
+            console.error('❌ ERRO INESPERADO no login:', error);
+            console.error('🔍 Stack trace:', error.stack);
+            
+            // Verificar se é erro de rede
+            if (error.message?.includes('fetch')) {
+                setError('Erro de conexão. Verifique se o servidor backend está rodando na porta 5000.');
+            } else {
+                setError(`Erro inesperado: ${error.message}`);
+            }
         } finally {
             setLoading(false);
+            console.log('🏁 Processo de login finalizado');
+        }
+    };
+
+    const testServerConnection = async () => {
+        console.log('🧪 Testando conexão com servidor...');
+        
+        try {
+            const response = await fetch('http://localhost:5000/api/test');
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log('✅ Servidor respondeu:', data);
+            alert(`Servidor OK: ${data.message || data.status}`);
+            
+        } catch (error) {
+            console.error('❌ Servidor não responde:', error);
+            alert(`Erro: ${error.message}\n\nVerifique se o backend Flask está rodando em http://localhost:5000`);
         }
     };
 
     return (
-        <div className="login-container">
-            <div className="login-card">
-                <div className="login-header">
-                    <h2>🏢 Intranet - Login</h2>
-                    <p>Entre com suas credenciais</p>
+        <div style={styles.container}>
+            <div style={styles.card}>
+                <div style={styles.header}>
+                    <h2>🏢 Login - Intranet</h2>
                 </div>
 
-                <form onSubmit={handleSubmit} className="login-form">
+                {/* FORM com onSubmit - IMPORTANTE! */}
+                <form onSubmit={handleLoginSubmit} style={styles.form}>
+                    
                     {/* Campo Usuário */}
-                    <div className="form-group">
-                        <label htmlFor="cdUsuario">
-                            👤 Código do Usuário
-                        </label>
+                    <div style={styles.field}>
+                        <label>Usuário:</label>
                         <input
                             type="text"
-                            id="cdUsuario"
-                            name="cdUsuario"
-                            value={formData.cdUsuario}
-                            onChange={handleChange}
-                            placeholder="Ex: f011349"
+                            name="usuario"
+                            value={formData.usuario}
+                            onChange={handleInputChange}
                             disabled={loading}
-                            className={error && !formData.cdUsuario.trim() ? 'error' : ''}
+                            placeholder="Digite o código do usuário"
+                            style={styles.input}
+                            autoComplete="username"
                         />
                     </div>
 
                     {/* Campo Senha */}
-                    <div className="form-group">
-                        <label htmlFor="password">
-                            🔒 Senha
-                        </label>
-                        <div className="password-input">
-                            <input
-                                type={showPassword ? 'text' : 'password'}
-                                id="password"
-                                name="password"
-                                value={formData.password}
-                                onChange={handleChange}
-                                placeholder="Digite sua senha"
-                                disabled={loading}
-                                className={error && !formData.password.trim() ? 'error' : ''}
-                            />
-                            <button
-                                type="button"
-                                className="toggle-password"
-                                onClick={() => setShowPassword(!showPassword)}
-                                disabled={loading}
-                            >
-                                {showPassword ? '🙈' : '👁️'}
-                            </button>
-                        </div>
+                    <div style={styles.field}>
+                        <label>Senha:</label>
+                        <input
+                            type="password"
+                            name="senha"
+                            value={formData.senha}
+                            onChange={handleInputChange}
+                            disabled={loading}
+                            placeholder="Digite sua senha"
+                            style={styles.input}
+                            autoComplete="current-password"
+                        />
                     </div>
 
                     {/* Campo Empresa */}
-                    <div className="form-group">
-                        <label htmlFor="cdMultiEmpresa">
-                            🏭 Código da Empresa
-                        </label>
-                        <select
-                            id="cdMultiEmpresa"
-                            name="cdMultiEmpresa"
-                            value={formData.cdMultiEmpresa}
-                            onChange={handleChange}
+                    <div style={styles.field}>
+                        <label>Empresa:</label>
+                        <input
+                            type="number"
+                            name="empresa"
+                            value={formData.empresa}
+                            onChange={handleInputChange}
                             disabled={loading}
-                        >
-                            <option value={1}>1 - Empresa Principal</option>
-                            <option value={2}>2 - Empresa Secundária</option>
-                            {/* Adicionar mais empresas conforme necessário */}
-                        </select>
+                            min="1"
+                            style={styles.input}
+                        />
                     </div>
 
-                    {/* Mensagem de erro */}
+                    {/* Mensagem de Erro */}
                     {error && (
-                        <div className="error-message">
+                        <div style={styles.error}>
                             ❌ {error}
                         </div>
                     )}
@@ -170,186 +221,117 @@ const Login = ({ onLoginSuccess }) => {
                     <button
                         type="submit"
                         disabled={loading}
-                        className={`login-button ${loading ? 'loading' : ''}`}
+                        style={{
+                            ...styles.button,
+                            opacity: loading ? 0.7 : 1,
+                            cursor: loading ? 'not-allowed' : 'pointer'
+                        }}
                     >
-                        {loading ? (
-                            <>
-                                <span className="spinner"></span>
-                                Entrando...
-                            </>
-                        ) : (
-                            <>
-                                🚀 Entrar
-                            </>
-                        )}
+                        {loading ? '⏳ Entrando...' : '🔓 Entrar'}
                     </button>
+
+                    {/* Botão de Teste (para debug) */}
+                    <button
+                        type="button"
+                        onClick={testServerConnection}
+                        style={styles.testButton}
+                        disabled={loading}
+                    >
+                        🧪 Testar Conexão Backend
+                    </button>
+
                 </form>
 
-                {/* Informações adicionais */}
-                <div className="login-footer">
-                    <p>
+                {/* Debug Info */}
+                {process.env.NODE_ENV === 'development' && (
+                    <div style={styles.debug}>
                         <small>
-                            💡 Em caso de problemas, contate o suporte técnico
+                            🔧 Debug: Usuario="{formData.usuario}" | Empresa={formData.empresa} | SenhaLen={formData.senha?.length || 0}
                         </small>
-                    </p>
-                </div>
+                    </div>
+                )}
             </div>
-
-            {/* CSS Styles */}
-            <style jsx>{`
-                .login-container {
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    min-height: 100vh;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    padding: 20px;
-                }
-
-                .login-card {
-                    background: white;
-                    padding: 2rem;
-                    border-radius: 12px;
-                    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-                    width: 100%;
-                    max-width: 400px;
-                }
-
-                .login-header {
-                    text-align: center;
-                    margin-bottom: 2rem;
-                }
-
-                .login-header h2 {
-                    color: #333;
-                    margin-bottom: 0.5rem;
-                }
-
-                .login-header p {
-                    color: #666;
-                    margin: 0;
-                }
-
-                .form-group {
-                    margin-bottom: 1.5rem;
-                }
-
-                .form-group label {
-                    display: block;
-                    margin-bottom: 0.5rem;
-                    font-weight: 600;
-                    color: #333;
-                }
-
-                .form-group input,
-                .form-group select {
-                    width: 100%;
-                    padding: 12px;
-                    border: 2px solid #e1e5e9;
-                    border-radius: 8px;
-                    font-size: 16px;
-                    transition: border-color 0.3s ease;
-                }
-
-                .form-group input:focus,
-                .form-group select:focus {
-                    outline: none;
-                    border-color: #667eea;
-                }
-
-                .form-group input.error,
-                .form-group select.error {
-                    border-color: #e74c3c;
-                    background-color: #fef5f5;
-                }
-
-                .password-input {
-                    position: relative;
-                }
-
-                .toggle-password {
-                    position: absolute;
-                    right: 12px;
-                    top: 50%;
-                    transform: translateY(-50%);
-                    background: none;
-                    border: none;
-                    font-size: 18px;
-                    cursor: pointer;
-                    padding: 0;
-                    opacity: 0.6;
-                    transition: opacity 0.2s;
-                }
-
-                .toggle-password:hover {
-                    opacity: 1;
-                }
-
-                .error-message {
-                    background: #fef5f5;
-                    color: #e74c3c;
-                    padding: 12px;
-                    border-radius: 8px;
-                    margin-bottom: 1rem;
-                    border-left: 4px solid #e74c3c;
-                }
-
-                .login-button {
-                    width: 100%;
-                    padding: 14px;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                    font-size: 16px;
-                    font-weight: 600;
-                    cursor: pointer;
-                    transition: all 0.3s ease;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 8px;
-                }
-
-                .login-button:hover:not(:disabled) {
-                    transform: translateY(-2px);
-                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-                }
-
-                .login-button:disabled {
-                    opacity: 0.7;
-                    cursor: not-allowed;
-                    transform: none;
-                }
-
-                .spinner {
-                    width: 16px;
-                    height: 16px;
-                    border: 2px solid transparent;
-                    border-top: 2px solid currentColor;
-                    border-radius: 50%;
-                    animation: spin 1s linear infinite;
-                }
-
-                .login-footer {
-                    text-align: center;
-                    margin-top: 2rem;
-                    color: #666;
-                }
-
-                @keyframes spin {
-                    to { transform: rotate(360deg); }
-                }
-
-                @media (max-width: 480px) {
-                    .login-card {
-                        padding: 1.5rem;
-                        margin: 10px;
-                    }
-                }
-            `}</style>
         </div>
     );
+};
+
+// Estilos inline
+const styles = {
+    container: {
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '100vh',
+        backgroundColor: '#f5f5f5',
+        fontFamily: 'Arial, sans-serif',
+        padding: '20px'
+    },
+    card: {
+        backgroundColor: 'white',
+        padding: '2rem',
+        borderRadius: '8px',
+        boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+        width: '400px',
+        maxWidth: '100%'
+    },
+    header: {
+        textAlign: 'center',
+        marginBottom: '2rem',
+        color: '#333'
+    },
+    form: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '1.5rem'
+    },
+    field: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '0.5rem'
+    },
+    input: {
+        padding: '12px',
+        border: '2px solid #ddd',
+        borderRadius: '4px',
+        fontSize: '16px',
+        transition: 'border-color 0.3s'
+    },
+    button: {
+        padding: '14px',
+        backgroundColor: '#007bff',
+        color: 'white',
+        border: 'none',
+        borderRadius: '4px',
+        fontSize: '16px',
+        fontWeight: 'bold',
+        marginTop: '10px',
+        transition: 'background-color 0.3s'
+    },
+    testButton: {
+        padding: '10px',
+        backgroundColor: '#28a745',
+        color: 'white',
+        border: 'none',
+        borderRadius: '4px',
+        fontSize: '14px',
+        marginTop: '10px'
+    },
+    error: {
+        padding: '12px',
+        backgroundColor: '#f8d7da',
+        color: '#721c24',
+        border: '1px solid #f5c6cb',
+        borderRadius: '4px',
+        fontSize: '14px'
+    },
+    debug: {
+        marginTop: '1rem',
+        padding: '10px',
+        backgroundColor: '#f8f9fa',
+        borderRadius: '4px',
+        fontSize: '12px',
+        color: '#666'
+    }
 };
 
 export default Login;

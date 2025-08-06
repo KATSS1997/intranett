@@ -1,235 +1,164 @@
 /**
- * Configuração da API com Axios
+ * Configuração da API (Axios)
  * Caminho: frontend/src/services/api.js
  */
 
 import axios from 'axios';
-import { storage } from '../utils/storage';
-import { STORAGE_KEYS } from '../utils/constants';
 
-// Base URL da API
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+// ✅ URL base do backend Flask
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 // Criar instância do axios
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: BASE_URL,
   timeout: 30000, // 30 segundos
   headers: {
     'Content-Type': 'application/json',
-  },
+    'Accept': 'application/json'
+  }
 });
 
-// Interceptor de REQUEST - Adiciona token automaticamente
+// ✅ Interceptor de Request - Adiciona token automaticamente
 api.interceptors.request.use(
   (config) => {
-    // Pega token do localStorage
-    const token = storage.get(STORAGE_KEYS.TOKEN);
-    
+    // Log da requisição (apenas em desenvolvimento)
+    if (import.meta.env.DEV) {
+      console.log(`🌐 ${config.method?.toUpperCase()} ${config.url}`, {
+        data: config.data,
+        params: config.params
+      });
+    }
+
+    // Adiciona token se existir
+    const token = localStorage.getItem('auth_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    
-    // Log da requisição (apenas em desenvolvimento)
-    if (import.meta.env.DEV) {
-      console.log(`🚀 API Request: ${config.method?.toUpperCase()} ${config.url}`);
-    }
-    
+
     return config;
   },
   (error) => {
-    console.error('❌ Request Error:', error);
+    console.error('❌ Erro na requisição:', error);
     return Promise.reject(error);
   }
 );
 
-// Interceptor de RESPONSE - Trata erros globalmente
+// ✅ Interceptor de Response - Trata respostas e erros
 api.interceptors.response.use(
   (response) => {
     // Log da resposta (apenas em desenvolvimento)
     if (import.meta.env.DEV) {
-      console.log(`✅ API Response: ${response.config.method?.toUpperCase()} ${response.config.url}`, response.data);
+      console.log(`✅ ${response.status} ${response.config.url}`, response.data);
     }
-    
+
     return response;
   },
   (error) => {
-    const { response, request, message } = error;
-    
     // Log do erro
-    console.error('❌ API Error:', {
-      status: response?.status,
-      statusText: response?.statusText,
-      data: response?.data,
-      url: request?.responseURL || 'Unknown URL',
-    });
-    
-    // Tratamento específico por código de erro
-    if (response) {
-      switch (response.status) {
-        case 401:
-          // Token inválido ou expirado - redireciona para login
-          handleUnauthorized();
-          break;
+    if (error.response) {
+      // Erro HTTP (400, 401, 500, etc.)
+      console.error(`❌ ${error.response.status} ${error.response.config.url}:`, {
+        message: error.response.data?.message,
+        data: error.response.data
+      });
+
+      // ✅ Auto logout em caso de token inválido
+      if (error.response.status === 401) {
+        const currentPath = window.location.pathname;
+        
+        // Só faz logout automático se não estiver na página de login
+        if (currentPath !== '/login') {
+          console.log('🔄 Token inválido - redirecionando para login');
           
-        case 403:
-          // Sem permissão
-          console.warn('🚫 Acesso negado:', response.data?.message);
-          break;
+          // Remove dados de autenticação
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('user_data');
           
-        case 404:
-          console.warn('🔍 Endpoint não encontrado:', request?.responseURL);
-          break;
-          
-        case 500:
-          console.error('💥 Erro interno do servidor');
-          break;
-          
-        default:
-          console.error(`⚠️ Erro HTTP ${response.status}:`, response.data?.message);
+          // Redireciona para login
+          window.location.href = '/login';
+        }
       }
-    } else if (request) {
-      // Erro de rede/conexão
-      console.error('🌐 Erro de conexão - Servidor não responde');
+    } else if (error.request) {
+      // Erro de rede (sem resposta do servidor)
+      console.error('🌐 Erro de rede:', error.message);
     } else {
       // Erro na configuração da requisição
-      console.error('⚙️ Erro de configuração:', message);
+      console.error('⚙️ Erro de configuração:', error.message);
     }
-    
+
     return Promise.reject(error);
   }
 );
 
-// Função para lidar com token expirado/inválido
-const handleUnauthorized = () => {
-  // Remove dados do usuário do localStorage
-  storage.remove(STORAGE_KEYS.TOKEN);
-  storage.remove(STORAGE_KEYS.USER);
-  
-  // Redireciona para login (se não estiver já na página de login)
-  if (window.location.pathname !== '/login') {
-    console.log('🔒 Token inválido - Redirecionando para login');
-    window.location.href = '/login';
-  }
-};
-
-// Métodos auxiliares para requisições
-export const apiMethods = {
-  // GET
-  get: async (url, config = {}) => {
-    try {
-      const response = await api.get(url, config);
-      return response.data;
-    } catch (error) {
-      throw formatError(error);
-    }
-  },
-  
-  // POST
-  post: async (url, data = {}, config = {}) => {
-    try {
-      const response = await api.post(url, data, config);
-      return response.data;
-    } catch (error) {
-      throw formatError(error);
-    }
-  },
-  
-  // PUT
-  put: async (url, data = {}, config = {}) => {
-    try {
-      const response = await api.put(url, data, config);
-      return response.data;
-    } catch (error) {
-      throw formatError(error);
-    }
-  },
-  
-  // DELETE
-  delete: async (url, config = {}) => {
-    try {
-      const response = await api.delete(url, config);
-      return response.data;
-    } catch (error) {
-      throw formatError(error);
-    }
-  },
-  
-  // PATCH
-  patch: async (url, data = {}, config = {}) => {
-    try {
-      const response = await api.patch(url, data, config);
-      return response.data;
-    } catch (error) {
-      throw formatError(error);
-    }
-  },
-};
-
-// Formatar erro para o frontend
-const formatError = (error) => {
-  if (error.response) {
-    // Erro com resposta do servidor
-    const { data, status, statusText } = error.response;
-    
-    return {
-      message: data?.message || statusText || 'Erro no servidor',
-      code: data?.error_code || `HTTP_${status}`,
-      status,
-      details: data,
-    };
-  } else if (error.request) {
-    // Erro de rede
-    return {
-      message: 'Erro de conexão com o servidor',
-      code: 'NETWORK_ERROR',
-      status: 0,
-      details: null,
-    };
-  } else {
-    // Erro de configuração
-    return {
-      message: error.message || 'Erro desconhecido',
-      code: 'UNKNOWN_ERROR',
-      status: 0,
-      details: null,
-    };
-  }
-};
-
-// Função para verificar se API está online
-export const checkApiHealth = async () => {
+// ✅ Função helper para fazer requests com tratamento de erro padronizado
+export const apiRequest = async (requestFn) => {
   try {
-    const response = await api.get('/auth/health');
-    return {
-      online: true,
-      status: response.data.status,
-      database: response.data.database,
-    };
+    const response = await requestFn();
+    return { success: true, data: response.data };
   } catch (error) {
-    return {
-      online: false,
-      error: formatError(error),
+    const errorMessage = error.response?.data?.message || error.message || 'Erro desconhecido';
+    console.error('API Request Error:', errorMessage);
+    return { success: false, error: errorMessage };
+  }
+};
+
+// ✅ Helpers específicos para diferentes tipos de request
+export const apiHelpers = {
+  // GET com tratamento de erro
+  get: async (url, config = {}) => {
+    return apiRequest(() => api.get(url, config));
+  },
+
+  // POST com tratamento de erro
+  post: async (url, data = {}, config = {}) => {
+    return apiRequest(() => api.post(url, data, config));
+  },
+
+  // PUT com tratamento de erro
+  put: async (url, data = {}, config = {}) => {
+    return apiRequest(() => api.put(url, data, config));
+  },
+
+  // DELETE com tratamento de erro
+  delete: async (url, config = {}) => {
+    return apiRequest(() => api.delete(url, config));
+  }
+};
+
+// ✅ Função para testar conectividade com o backend
+export const testConnection = async () => {
+  try {
+    console.log('🔍 Testando conexão com backend...');
+    
+    const response = await api.get('/test', { timeout: 5000 });
+    
+    if (response.data.status === 'ok') {
+      console.log('✅ Backend conectado:', response.data.message);
+      return { connected: true, data: response.data };
+    } else {
+      console.warn('⚠️ Backend respondeu mas com status não OK');
+      return { connected: false, error: 'Status não OK' };
+    }
+  } catch (error) {
+    console.error('❌ Falha na conexão com backend:', error.message);
+    return { 
+      connected: false, 
+      error: error.response?.data?.message || error.message 
     };
   }
 };
 
-// Função para configurar token manualmente (se necessário)
-export const setAuthToken = (token) => {
-  if (token) {
-    api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-    storage.set(STORAGE_KEYS.TOKEN, token);
-  } else {
-    delete api.defaults.headers.common['Authorization'];
-    storage.remove(STORAGE_KEYS.TOKEN);
+// ✅ Função para verificar health do backend
+export const checkHealth = async () => {
+  try {
+    const response = await api.get('/health', { timeout: 5000 });
+    return { healthy: true, data: response.data };
+  } catch (error) {
+    return { 
+      healthy: false, 
+      error: error.response?.data || error.message 
+    };
   }
 };
 
-// Função para limpar autenticação
-export const clearAuth = () => {
-  delete api.defaults.headers.common['Authorization'];
-  storage.remove(STORAGE_KEYS.TOKEN);
-  storage.remove(STORAGE_KEYS.USER);
-};
-
-// Export da instância configurada
 export default api;

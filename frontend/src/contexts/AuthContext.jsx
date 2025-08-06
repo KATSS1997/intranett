@@ -1,12 +1,10 @@
 /**
- * Context de Autenticação
+ * Context de Autenticação - VERSÃO COM BACKEND REAL
  * Caminho: frontend/src/contexts/AuthContext.jsx
  */
 
 import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
 import authService from '../services/authService';
-import { REQUEST_STATUS, ERROR_CODES } from '../utils/constants';
-import { storageMonitor } from '../utils/storage';
 
 // Estados possíveis da autenticação
 const AUTH_ACTIONS = {
@@ -27,7 +25,6 @@ const initialState = {
   token: null,
   isAuthenticated: false,
   isLoading: true,
-  status: REQUEST_STATUS.IDLE,
   error: null,
   lastLoginTime: null,
   sessionExpiry: null,
@@ -40,7 +37,6 @@ const authReducer = (state, action) => {
       return {
         ...state,
         isLoading: true,
-        status: REQUEST_STATUS.LOADING,
         error: null,
       };
 
@@ -51,7 +47,6 @@ const authReducer = (state, action) => {
         token: action.payload.token,
         isAuthenticated: true,
         isLoading: false,
-        status: REQUEST_STATUS.SUCCESS,
         error: null,
         lastLoginTime: new Date().toISOString(),
         sessionExpiry: action.payload.sessionExpiry,
@@ -64,7 +59,6 @@ const authReducer = (state, action) => {
         token: null,
         isAuthenticated: false,
         isLoading: false,
-        status: REQUEST_STATUS.ERROR,
         error: action.payload.error,
         lastLoginTime: null,
         sessionExpiry: null,
@@ -74,7 +68,6 @@ const authReducer = (state, action) => {
       return {
         ...initialState,
         isLoading: false,
-        status: REQUEST_STATUS.IDLE,
       };
 
     case AUTH_ACTIONS.VERIFY_SUCCESS:
@@ -83,7 +76,6 @@ const authReducer = (state, action) => {
         user: action.payload.user,
         isAuthenticated: true,
         isLoading: false,
-        status: REQUEST_STATUS.SUCCESS,
         error: null,
       };
 
@@ -94,7 +86,6 @@ const authReducer = (state, action) => {
         token: null,
         isAuthenticated: false,
         isLoading: false,
-        status: REQUEST_STATUS.ERROR,
         error: action.payload.error,
       };
 
@@ -108,7 +99,6 @@ const authReducer = (state, action) => {
       return {
         ...state,
         error: null,
-        status: state.isAuthenticated ? REQUEST_STATUS.SUCCESS : REQUEST_STATUS.IDLE,
       };
 
     case AUTH_ACTIONS.SET_INITIAL_STATE:
@@ -132,20 +122,20 @@ const AuthContext = createContext(undefined);
 export const AuthProvider = ({ children }) => {
   const [state, dispatch] = useReducer(authReducer, initialState);
 
-  // Inicialização - verifica se já está logado
+  // ✅ Inicialização - verifica se já está logado usando o backend real
   useEffect(() => {
     const initializeAuth = async () => {
       try {
         dispatch({ type: AUTH_ACTIONS.LOADING });
 
-        // Verifica se há dados salvos
-        const savedUser = authService.getUser();
+        // Verifica se há dados salvos no localStorage
         const savedToken = authService.getToken();
+        const savedUser = authService.getUser();
 
-        if (savedUser && savedToken) {
-          console.log('🔍 Verificando token salvo...');
+        if (savedToken && savedUser) {
+          console.log('🔍 Dados salvos encontrados, verificando no backend...');
 
-          // Verifica se token ainda é válido
+          // ✅ Verifica token no backend real
           const verificationResult = await authService.verifyToken();
 
           if (verificationResult.valid) {
@@ -161,12 +151,14 @@ export const AuthProvider = ({ children }) => {
               },
             });
 
-            console.log('✅ Usuário autenticado:', verificationResult.user.nomeUsuario);
+            console.log('✅ Usuário autenticado:', verificationResult.user.nome_usuario || verificationResult.user.cd_usuario);
           } else {
-            // Token inválido - limpa dados
+            console.warn('⚠️ Token inválido, fazendo logout...');
+            authService.clearAuth();
+            
             dispatch({
               type: AUTH_ACTIONS.VERIFY_ERROR,
-              payload: { error: 'Sessão expirada' },
+              payload: { error: verificationResult.error || 'Sessão inválida' },
             });
           }
         } else {
@@ -179,9 +171,13 @@ export const AuthProvider = ({ children }) => {
               isAuthenticated: false,
             },
           });
+          
+          console.log('ℹ️ Nenhum usuário autenticado');
         }
       } catch (error) {
         console.error('❌ Erro na inicialização da autenticação:', error);
+        authService.clearAuth();
+        
         dispatch({
           type: AUTH_ACTIONS.VERIFY_ERROR,
           payload: { error: 'Erro ao verificar autenticação' },
@@ -192,32 +188,40 @@ export const AuthProvider = ({ children }) => {
     initializeAuth();
   }, []);
 
-  // Monitor de mudanças no localStorage (sync entre abas)
-  useEffect(() => {
-    const handleTokenChange = ({ key, newValue }) => {
-      if (key === 'auth_token') {
-        if (!newValue) {
-          // Token removido em outra aba - faz logout
-          console.log('🔄 Token removido em outra aba - fazendo logout');
-          dispatch({ type: AUTH_ACTIONS.LOGOUT });
-        }
-      }
-    };
-
-    storageMonitor.watch('auth_token', handleTokenChange);
-
-    return () => {
-      storageMonitor.unwatch('auth_token', handleTokenChange);
-    };
-  }, []);
-
-  // Função de login
-  const login = useCallback(async (cdUsuario, password, cdMultiEmpresa) => {
+  // ✅ Função de login usando backend real
+  const login = useCallback(async (loginData) => {
     try {
       dispatch({ type: AUTH_ACTIONS.LOADING });
 
       console.log('🔐 Iniciando login...');
 
+      let cdUsuario, password, cdMultiEmpresa;
+
+      // Aceita tanto objeto quanto parâmetros separados
+      if (typeof loginData === 'object') {
+        cdUsuario = loginData.cdUsuario;
+        password = loginData.password;
+        cdMultiEmpresa = loginData.cdMultiEmpresa;
+      } else {
+        cdUsuario = arguments[0];
+        password = arguments[1];
+        cdMultiEmpresa = arguments[2];
+      }
+
+      // Validação básica
+      if (!cdUsuario?.trim()) {
+        throw new Error('Código do usuário é obrigatório');
+      }
+      if (!password?.trim()) {
+        throw new Error('Senha é obrigatória');
+      }
+      if (!cdMultiEmpresa) {
+        throw new Error('Código da empresa é obrigatório');
+      }
+
+      console.log('🔐 Dados do login:', { cdUsuario, cdMultiEmpresa });
+
+      // ✅ Chama o backend real via authService
       const result = await authService.login(cdUsuario, password, cdMultiEmpresa);
 
       if (result.success) {
@@ -238,37 +242,41 @@ export const AuthProvider = ({ children }) => {
 
         return { success: true, user: result.user };
       } else {
+        const errorMessage = result.error || 'Credenciais inválidas';
+        
         dispatch({
           type: AUTH_ACTIONS.LOGIN_ERROR,
-          payload: { error: result.error },
+          payload: { error: errorMessage },
         });
 
         return {
           success: false,
-          error: result.error,
-          code: result.code,
+          error: errorMessage,
         };
       }
     } catch (error) {
       console.error('❌ Erro no login:', error);
 
+      const errorMessage = error.message || 'Erro inesperado durante o login';
+
       dispatch({
         type: AUTH_ACTIONS.LOGIN_ERROR,
-        payload: { error: 'Erro inesperado no login' },
+        payload: { error: errorMessage },
       });
 
       return {
         success: false,
-        error: 'Erro inesperado no login',
+        error: errorMessage,
       };
     }
   }, []);
 
-  // Função de logout
+  // ✅ Função de logout usando backend real
   const logout = useCallback(async () => {
     try {
       console.log('🚪 Fazendo logout...');
 
+      // ✅ Chama o backend real via authService
       await authService.logout();
 
       dispatch({ type: AUTH_ACTIONS.LOGOUT });
@@ -279,10 +287,10 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('❌ Erro no logout:', error);
 
-      // Mesmo com erro, faz logout local
+      // Mesmo com erro, força o logout local
       dispatch({ type: AUTH_ACTIONS.LOGOUT });
 
-      return { success: true };
+      return { success: false, error: 'Erro durante logout' };
     }
   }, []);
 
@@ -292,6 +300,11 @@ export const AuthProvider = ({ children }) => {
       type: AUTH_ACTIONS.UPDATE_USER,
       payload: { user: userData },
     });
+
+    // Atualiza também via authService
+    const currentUser = authService.getUser();
+    const updatedUser = { ...currentUser, ...userData };
+    authService.setUser(updatedUser);
   }, []);
 
   // Função para limpar erros
@@ -299,42 +312,30 @@ export const AuthProvider = ({ children }) => {
     dispatch({ type: AUTH_ACTIONS.CLEAR_ERROR });
   }, []);
 
-  // Função para verificar permissões
-  const hasRole = useCallback((roles) => {
+  // Helpers de verificação de perfil
+  const hasRole = useCallback((role) => {
     if (!state.user) return false;
-    return authService.hasRole(roles);
+    return state.user.perfil === role;
   }, [state.user]);
 
-  // Função para verificar se é admin
   const isAdmin = useCallback(() => {
-    return authService.isAdmin();
-  }, []);
+    return hasRole('admin') || hasRole('administrador');
+  }, [hasRole]);
 
-  // Função para verificar se é manager
   const isManager = useCallback(() => {
-    return authService.isManager();
-  }, []);
+    return hasRole('gerente') || hasRole('manager');
+  }, [hasRole]);
 
-  // Função para obter tempo restante da sessão
+  // Função para calcular tempo restante da sessão
   const getSessionTimeRemaining = useCallback(() => {
-    if (!state.sessionExpiry) return null;
+    if (!state.sessionExpiry) return 0;
 
-    const now = new Date();
     const expiry = new Date(state.sessionExpiry);
+    const now = new Date();
     const remaining = expiry.getTime() - now.getTime();
 
     return remaining > 0 ? remaining : 0;
   }, [state.sessionExpiry]);
-
-  // Função para verificar se sessão está próxima do vencimento
-  const isSessionNearExpiry = useCallback((minutes = 10) => {
-    if (!state.sessionExpiry) return false;
-
-    const timeRemaining = getSessionTimeRemaining();
-    const warningTime = minutes * 60 * 1000; // Converte para ms
-
-    return timeRemaining > 0 && timeRemaining <= warningTime;
-  }, [getSessionTimeRemaining]);
 
   // Auto logout quando sessão expira
   useEffect(() => {
@@ -355,10 +356,33 @@ export const AuthProvider = ({ children }) => {
     return () => clearInterval(interval);
   }, [state.isAuthenticated, state.sessionExpiry, getSessionTimeRemaining, logout]);
 
+  // Monitor de mudanças no localStorage (sync entre abas)
+  useEffect(() => {
+    const handleStorageChange = (event) => {
+      if (event.key === 'auth_token' && !event.newValue) {
+        // Token removido em outra aba - faz logout
+        console.log('🔄 Token removido em outra aba - fazendo logout');
+        dispatch({ type: AUTH_ACTIONS.LOGOUT });
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
+
   // Valor do contexto
   const contextValue = {
     // Estado
-    ...state,
+    user: state.user,
+    token: state.token,
+    isAuthenticated: state.isAuthenticated,
+    isLoading: state.isLoading,
+    error: state.error,
+    lastLoginTime: state.lastLoginTime,
+    sessionExpiry: state.sessionExpiry,
 
     // Ações
     login,
@@ -371,14 +395,12 @@ export const AuthProvider = ({ children }) => {
     isAdmin,
     isManager,
     getSessionTimeRemaining,
-    isSessionNearExpiry,
 
-    // Dados computados
-    userName: state.user?.nomeUsuario || null,
-    userCode: state.user?.cdUsuario || null,
-    userCompany: state.user?.cdMultiEmpresa || null,
+    // Dados computados para compatibilidade
+    userName: state.user?.nome_usuario || state.user?.cd_usuario || null,
+    userCode: state.user?.cd_usuario || null,
+    userCompany: state.user?.cd_multi_empresa || null,
     userRole: state.user?.perfil || null,
-    companyName: state.user?.nomeEmpresa || null,
   };
 
   return (
@@ -397,29 +419,6 @@ export const useAuth = () => {
   }
 
   return context;
-};
-
-// Hook para verificar se está autenticado (boolean simples)
-export const useIsAuthenticated = () => {
-  const { isAuthenticated } = useAuth();
-  return isAuthenticated;
-};
-
-// Hook para obter dados do usuário (null se não autenticado)
-export const useUser = () => {
-  const { user, isAuthenticated } = useAuth();
-  return isAuthenticated ? user : null;
-};
-
-// Hook para verificar permissões
-export const usePermissions = () => {
-  const { hasRole, isAdmin, isManager } = useAuth();
-
-  return {
-    hasRole,
-    isAdmin: isAdmin(),
-    isManager: isManager(),
-  };
 };
 
 export default AuthContext;
