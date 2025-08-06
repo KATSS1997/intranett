@@ -1,21 +1,31 @@
 export const storage = {
-  get: (key) => {
+  get(key) {
     try {
-      return JSON.parse(localStorage.getItem(key))
+      const item = localStorage.getItem(key);
+      return item ? JSON.parse(item) : null;
     } catch {
-      return null
+      return null;
     }
   },
-  
-  set: (key, value) => {
-    localStorage.setItem(key, JSON.stringify(value))
+  set(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+      console.error('Erro ao salvar:', error);
+    }
   },
-  
-  remove: (key) => {
-    localStorage.removeItem(key)
-  },
-  
-  clear: () => {
-    localStorage.clear()
+  remove(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch (error) {
+      console.error('Erro ao remover:', error);
+    }
   }
-}
+};
+
+export const cacheStorage = storage;
+export const settingsStorage = storage;
+export const storageMonitor = {
+  watch: () => {},
+  unwatch: () => {}
+};

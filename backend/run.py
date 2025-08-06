@@ -1,112 +1,101 @@
 #!/usr/bin/env python3
 """
-Backend Flask com Oracle Real
+Servidor Flask Principal - VERSÃO CORRIGIDA
 Caminho: backend/run.py
 """
 
 import os
 import sys
 import logging
-from flask import Flask
-from flask_cors import CORS
+from pathlib import Path
 
 # Adicionar o diretório app ao path do Python
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'app'))
+current_dir = Path(__file__).parent
+app_dir = current_dir / 'app'
+sys.path.insert(0, str(app_dir))
+
+# Configurar variáveis de ambiente se não existirem
+if not os.getenv('SECRET_KEY'):
+    os.environ['SECRET_KEY'] = 'dev-secret-key-mude-em-producao'
+
+if not os.getenv('FLASK_ENV'):
+    os.environ['FLASK_ENV'] = 'development'
 
 # Configurar logging
+log_dir = current_dir / 'logs'
+log_dir.mkdir(exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(log_dir / 'server.log', mode='a', encoding='utf-8')
+    ]
 )
 logger = logging.getLogger(__name__)
 
-def create_app():
-    """Cria e configura a aplicação Flask"""
-    app = Flask(__name__)
-    
-    # Configurações
-    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
-    app.config['DEBUG'] = os.getenv('FLASK_ENV') == 'development'
-    
-    # CORS
-    CORS(app, origins=["http://localhost:3000"])
-    
-    # Importar e inicializar Oracle
+def main():
+    """Função principal para inicializar o servidor"""
     try:
-        from database import db
+        # Importar depois de configurar o path
+        from app import create_app
         
-        # Inicializar pool de conexões Oracle
-        db.initialize_pool()
-        
-        # Testar conexão
-        if db.test_connection():
-            logger.info("✅ Conectado ao Oracle: %s", db.config.dsn)
-        else:
-            logger.error("❌ Falha no teste de conexão Oracle")
-            
-    except Exception as e:
-        logger.error("❌ Erro ao conectar Oracle: %s", e)
-        logger.error("🔧 Verifique se o Oracle Client está instalado e configurado")
-    
-    # Registrar rotas de auth
-    try:
-        from routes.auth_routes import auth_bp
-        app.register_blueprint(auth_bp, url_prefix='/api/auth')
-        logger.info("✅ Rotas de autenticação registradas")
-        
-    except Exception as e:
-        logger.error("❌ Erro ao registrar rotas auth: %s", e)
-    
-    # Rota de teste
-    @app.route('/api/test')
-    def test():
-        return {
-            'status': 'ok',
-            'message': 'Backend Flask com Oracle funcionando!',
-            'version': '1.0.0',
-            'database': db.config.dsn if 'db' in locals() else 'não conectado'
-        }
-    
-    # Health check
-    @app.route('/api/health')
-    def health():
-        try:
-            db_status = db.test_connection() if 'db' in locals() else False
-            return {
-                'status': 'healthy' if db_status else 'unhealthy',
-                'database': 'connected' if db_status else 'disconnected',
-                'dsn': db.config.dsn if 'db' in locals() else 'N/A',
-                'message': 'API funcionando com Oracle real'
-            }
-        except Exception as e:
-            return {
-                'status': 'unhealthy',
-                'error': str(e),
-                'message': 'Erro na conexão Oracle'
-            }, 500
-    
-    return app
-
-if __name__ == '__main__':
-    try:
+        # Criar aplicação
         app = create_app()
         
-        print("\n" + "="*60)
-        print("🚀 INICIANDO BACKEND FLASK COM ORACLE")
-        print("="*60)
-        print(f"📍 URL: http://localhost:5000")
-        print(f"🔧 Debug: {app.config.get('DEBUG', False)}")
-        print(f"🗄️  Oracle: 192.168.0.9:1521/SMLMV")
-        print(f"👤 Usuário: dbamv")
-        print("="*60 + "\n")
+        # Configurações do servidor
+        host = os.getenv('FLASK_HOST', '0.0.0.0')
+        port = int(os.getenv('FLASK_PORT', 5000))
+        debug = os.getenv('FLASK_ENV') == 'development'
         
-        app.run(
-            debug=True,
-            host='0.0.0.0',
-            port=5000,
-            use_reloader=True
-        )
+        logger.info("=" * 60)
+        logger.info("🚀 INICIANDO INTRANET BACKEND")
+        logger.info("=" * 60)
+        logger.info(f"📍 Host: {host}:{port}")
+        logger.info(f"🔧 Modo: {os.getenv('FLASK_ENV', 'development')}")
+        logger.info(f"🐛 Debug: {debug}")
+        logger.info("=" * 60)
         
+        # Inicializar servidor
+        if debug:
+            # Modo desenvolvimento
+            app.run(
+                host=host,
+                port=port,
+                debug=True,
+                use_reloader=True,
+                threaded=True
+            )
+        else:
+            # Modo produção - usar Gunicorn
+            logger.info("💡 Para produção, use: gunicorn -w 4 -b 0.0.0.0:5000 run:app")
+            app.run(
+                host=host,
+                port=port,
+                debug=False,
+                threaded=True
+            )
+    
+    except ImportError as e:
+        logger.error(f"❌ Erro de importação: {e}")
+        logger.error("🔧 Verifique se todas as dependências estão instaladas:")
+        logger.error("   pip install -r requirements.txt")
+        sys.exit(1)
+    
     except Exception as e:
-        logger.error("❌ Erro fatal ao iniciar aplicação: %s", e)
-        exit(1)
+        logger.error(f"❌ Erro ao inicializar servidor: {e}")
+        import traceback
+        logger.error(f"❌ Stack trace: {traceback.format_exc()}")
+        sys.exit(1)
+
+# Para Gunicorn
+try:
+    from app import create_app
+    app = create_app()
+except Exception as e:
+    logger.error(f"❌ Erro ao criar app para Gunicorn: {e}")
+    raise
+
+if __name__ == '__main__':
+    main()

@@ -1,6 +1,5 @@
 """
-Serviço de autenticação DEFINITIVO para Oracle MV2000
-Usa DBASGU.USUARIOS (que tem cd_senha) + DBAMV.USUARIOS (dados complementares)
+Serviço de autenticação integrado com Oracle - SENHA EM TEXTO PLANO
 Caminho: backend/app/auth/auth_service.py
 """
 
@@ -27,28 +26,32 @@ class UserData:
     ultimo_acesso: Optional[datetime] = None
 
 class AuthService:
-    """Serviço de autenticação integrado com Oracle MV2000"""
+    """Serviço de autenticação integrado com Oracle"""
     
     def __init__(self, app_config: AppConfig):
         self.app_config = app_config
     
     def _validate_user_in_oracle(self, cd_usuario: str, password: str, cd_multi_empresa: int) -> Optional[UserData]:
         """
-        Valida usuário/senha no Oracle MV2000
-        Usa DBASGU.USUARIOS para autenticação (tem cd_senha)
-        Busca dados complementares em DBAMV.USUARIOS se necessário
+        Valida usuário/senha/empresa diretamente no Oracle
+        COMPARAÇÃO DIRETA - SEM HASH
         """
         try:
-            logger.info(f"🔍 Validando usuário: {cd_usuario}")
-            
-            # QUERY PRINCIPAL: DBASGU.USUARIOS (tem cd_senha)
-            auth_query = """
+            # Query para validar credenciais na estrutura real
+            query = """
                 SELECT 
                     u.cd_usuario,
-                    u.nm_usuario,
-                    u.cd_senha,
-                    u.sn_ativo
+                    u.nm_usuario as nome_usuario,
+                    :cd_multi_empresa as cd_multi_empresa,
+                    CASE 
+                        WHEN u.cd_papel IS NOT NULL THEN u.cd_papel
+                        ELSE 'user'
+                    END as perfil,
+                    u.sn_ativo as ativo,
+                    NULL as ultimo_acesso,
+                    me.nm_razao_social as nome_empresa
                 FROM dbasgu.usuarios u
+                LEFT JOIN dbamv.multi_empresas me ON me.cd_multi_empresa = :cd_multi_empresa
                 WHERE UPPER(u.cd_usuario) = UPPER(:cd_usuario)
                   AND u.cd_senha = :password
                   AND u.sn_ativo = 'S'
@@ -56,88 +59,40 @@ class AuthService:
             """
             
             params = {
-                'cd_usuario': cd_usuario.strip(),
-                'password': password.strip()
+                'cd_usuario': cd_usuario,
+                'password': password,  # Senha direta, sem hash
+                'cd_multi_empresa': cd_multi_empresa
             }
             
-            logger.debug(f"🔐 Executando autenticação para: {cd_usuario}")
+            logger.info(f"🔍 Validando usuário: {cd_usuario} na empresa {cd_multi_empresa}")
             
-            result = db.execute_query(auth_query, params)
+            result = db.execute_query(query, params)
             
             if not result:
-                logger.warning(f"❌ Credenciais inválidas para: {cd_usuario}")
+                logger.warning(f"❌ Credenciais inválidas para usuário: {cd_usuario}")
                 return None
             
-            user_row = result[0]
+            row = result[0]
             
-            logger.info(f"✅ Usuário autenticado: {user_row['nm_usuario']} ({user_row['cd_usuario']})")
-            
-            # Busca dados complementares em DBAMV.USUARIOS (opcional)
-            complementary_data = self._get_complementary_user_data(cd_usuario)
-            
-            # Atualiza último acesso
-            self._update_last_access(cd_usuario)
-            
-            return UserData(
-                cd_usuario=user_row['cd_usuario'],
-                nome_usuario=user_row['nm_usuario'] or cd_usuario,
-                cd_multi_empresa=cd_multi_empresa,
-                nome_empresa=f"Empresa {cd_multi_empresa}",
-                perfil=complementary_data.get('perfil', 'user'),
-                ativo=user_row['sn_ativo'] == 'S',
+            # Criar objeto UserData
+            user_data = UserData(
+                cd_usuario=row[0],
+                nome_usuario=row[1] or cd_usuario,  # Fallback se nome for null
+                cd_multi_empresa=row[2],
+                nome_empresa=row[6] or f"Empresa {cd_multi_empresa}",  # Fallback se nome empresa for null
+                perfil=row[3] or 'user',
+                ativo=row[4] == 'S',
                 ultimo_acesso=None
             )
             
+            logger.info(f"✅ Usuário validado: {cd_usuario} ({user_data.nome_usuario})")
+            return user_data
+            
         except Exception as e:
-            logger.error(f"❌ Erro na validação do usuário: {e}")
+            logger.error(f"❌ Erro na validação Oracle: {str(e)}")
+            import traceback
+            logger.error(f"❌ Stack trace: {traceback.format_exc()}")
             return None
-    
-    def _get_complementary_user_data(self, cd_usuario: str) -> Dict[str, Any]:
-        """Busca dados complementares em DBAMV.USUARIOS"""
-        try:
-            query = """
-                SELECT cd_usuario, nm_usuario, tp_acesso
-                FROM dbamv.usuarios 
-                WHERE UPPER(cd_usuario) = UPPER(:cd_usuario)
-                AND ROWNUM = 1
-            """
-            
-            result = db.execute_query(query, {'cd_usuario': cd_usuario})
-            
-            if result:
-                data = result[0]
-                logger.debug(f"📋 Dados complementares encontrados para {cd_usuario}: {data}")
-                return {
-                    'perfil': data.get('tp_acesso', 'user'),
-                    'nome_completo': data.get('nm_usuario')
-                }
-            else:
-                logger.debug(f"⚠️ Dados complementares não encontrados para {cd_usuario}")
-                return {}
-                
-        except Exception as e:
-            logger.debug(f"⚠️ Erro ao buscar dados complementares: {e}")
-            return {}
-    
-    def _update_last_access(self, cd_usuario: str) -> None:
-        """Atualiza último acesso (se existir campo dt_ultimo_acesso)"""
-        try:
-            # Tenta atualizar em DBASGU.USUARIOS
-            update_query = """
-                UPDATE dbasgu.usuarios 
-                SET dt_ultimo_acesso = SYSDATE 
-                WHERE cd_usuario = :cd_usuario
-            """
-            
-            affected = db.execute_dml(update_query, {'cd_usuario': cd_usuario})
-            
-            if affected > 0:
-                logger.debug(f"📝 Último acesso atualizado: {cd_usuario}")
-            else:
-                logger.debug(f"⚠️ Campo dt_ultimo_acesso pode não existir para: {cd_usuario}")
-                
-        except Exception as e:
-            logger.debug(f"⚠️ Não foi possível atualizar último acesso: {e}")
     
     def _generate_jwt_token(self, user_data: UserData) -> str:
         """Gera token JWT com dados do usuário"""
@@ -147,8 +102,8 @@ class AuthService:
             'cd_multi_empresa': user_data.cd_multi_empresa,
             'nome_empresa': user_data.nome_empresa,
             'perfil': user_data.perfil,
-            'exp': datetime.utcnow() + timedelta(hours=self.app_config.jwt_expiration_hours),
-            'iat': datetime.utcnow()
+            'iat': datetime.utcnow(),
+            'exp': datetime.utcnow() + timedelta(hours=self.app_config.jwt_expiration_hours)
         }
         
         token = jwt.encode(payload, self.app_config.secret_key, algorithm='HS256')
@@ -156,11 +111,11 @@ class AuthService:
     
     def authenticate(self, cd_usuario: str, password: str, cd_multi_empresa: int) -> Dict[str, Any]:
         """
-        Autentica usuário no MV2000 e retorna token + dados
+        Autentica usuário e retorna token + dados
         
         Args:
-            cd_usuario: Código do usuário (ex: F04821, DBAMV)
-            password: Senha (comparação direta com CD_SENHA do DBASGU.USUARIOS)
+            cd_usuario: Código do usuário (ex: F04601)
+            password: Senha em texto plano (comparação direta)
             cd_multi_empresa: Código da empresa
             
         Returns:
@@ -169,7 +124,6 @@ class AuthService:
         try:
             # Validações básicas
             if not cd_usuario or not password:
-                logger.warning("❌ Login sem credenciais")
                 return {
                     'success': False,
                     'error': 'Usuário e senha são obrigatórios',
@@ -177,7 +131,6 @@ class AuthService:
                 }
             
             if not cd_multi_empresa:
-                logger.warning("❌ Login sem empresa")
                 return {
                     'success': False,
                     'error': 'Empresa é obrigatória',
@@ -186,11 +139,10 @@ class AuthService:
             
             logger.info(f"🔐 Tentativa de login: {cd_usuario}@{cd_multi_empresa}")
             
-            # Valida no Oracle
+            # Valida no Oracle COM TEXTO PLANO
             user_data = self._validate_user_in_oracle(cd_usuario, password, cd_multi_empresa)
             
             if not user_data:
-                logger.warning(f"❌ Login inválido: {cd_usuario}@{cd_multi_empresa}")
                 return {
                     'success': False,
                     'error': 'Credenciais inválidas ou usuário inativo',
@@ -210,17 +162,18 @@ class AuthService:
                     'nomeUsuario': user_data.nome_usuario,
                     'cdMultiEmpresa': user_data.cd_multi_empresa,
                     'nomeEmpresa': user_data.nome_empresa,
-                    'perfil': user_data.perfil,
-                    'ultimoAcesso': user_data.ultimo_acesso.isoformat() if user_data.ultimo_acesso else None
+                    'perfil': user_data.perfil
                 }
             }
             
         except Exception as e:
-            logger.error(f"❌ Erro na autenticação: {e}")
+            logger.error(f"❌ Erro na autenticação: {str(e)}")
+            import traceback
+            logger.error(f"❌ Stack trace completo: {traceback.format_exc()}")
             return {
                 'success': False,
                 'error': 'Erro interno do servidor',
-                'code': 'SERVER_ERROR'
+                'code': 'INTERNAL_ERROR'
             }
     
     def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
@@ -228,21 +181,104 @@ class AuthService:
         try:
             payload = jwt.decode(token, self.app_config.secret_key, algorithms=['HS256'])
             return payload
+            
         except jwt.ExpiredSignatureError:
-            logger.warning("⚠️ Token expirado")
+            logger.warning("❌ Token expirado")
             return None
-        except jwt.InvalidTokenError:
-            logger.warning("⚠️ Token inválido")
+        except jwt.InvalidTokenError as e:
+            logger.warning(f"❌ Token inválido: {e}")
             return None
     
-    def log_access(self, cd_usuario: str, cd_multi_empresa: int, ip_address: str, user_agent: str) -> None:
-        """Registra log de acesso"""
+    def refresh_token(self, old_token: str) -> Optional[str]:
+        """Renova token JWT se válido"""
+        payload = self.verify_token(old_token)
+        
+        if not payload:
+            return None
+        
+        # Remove timestamps antigos
+        payload.pop('iat', None)
+        payload.pop('exp', None)
+        
+        # Adiciona novos timestamps
+        payload['iat'] = datetime.utcnow()
+        payload['exp'] = datetime.utcnow() + timedelta(hours=self.app_config.jwt_expiration_hours)
+        
+        return jwt.encode(payload, self.app_config.secret_key, algorithm='HS256')
+    
+    def log_access(self, cd_usuario: str, cd_multi_empresa: int, ip: str, user_agent: str = None):
+        """Log de acesso do usuário"""
         try:
-            logger.info(f"📝 Acesso registrado: {cd_usuario}@{cd_multi_empresa} de {ip_address}")
-            # Log em arquivo é suficiente por enquanto
+            logger.info(f"📋 Access Log: {cd_usuario}@{cd_multi_empresa} from {ip}")
+            
+            # Opcional: salvar em tabela de auditoria se existir
+            try:
+                audit_query = """
+                    INSERT INTO log_acessos (
+                        cd_usuario, 
+                        cd_multi_empresa, 
+                        ip_address, 
+                        user_agent, 
+                        data_acesso,
+                        tipo_acao
+                    ) VALUES (
+                        :cd_usuario,
+                        :cd_multi_empresa,
+                        :ip_address,
+                        :user_agent,
+                        SYSDATE,
+                        'LOGIN'
+                    )
+                """
+                
+                audit_params = {
+                    'cd_usuario': cd_usuario,
+                    'cd_multi_empresa': cd_multi_empresa,
+                    'ip_address': ip,
+                    'user_agent': user_agent or 'Unknown'
+                }
+                
+                db.execute_query(audit_query, audit_params, commit=True)
+                logger.debug(f"✅ Log de auditoria salvo para {cd_usuario}")
+                
+            except Exception as audit_error:
+                # Não falhar se tabela de auditoria não existir
+                logger.debug(f"⚠️ Tabela de auditoria não encontrada: {audit_error}")
             
         except Exception as e:
-            logger.error(f"❌ Erro ao registrar log de acesso: {e}")
+            logger.warning(f"⚠️ Erro no log de acesso: {e}")
 
-# Instância do serviço
-auth_service = AuthService(AppConfig.from_env())
+# Instância global do serviço (será inicializada no app)
+auth_service = None
+
+def initialize_auth_service():
+    """Inicializa o serviço de autenticação"""
+    global auth_service
+    try:
+        app_config = AppConfig.from_env()
+        auth_service = AuthService(app_config)
+        logger.info("✅ Serviço de autenticação inicializado")
+        return auth_service
+    except Exception as e:
+        logger.error(f"❌ Erro ao inicializar auth service: {e}")
+        raise
+
+# Inicializar automaticamente
+if auth_service is None:
+    try:
+        initialize_auth_service()
+    except Exception as e:
+        logger.warning(f"⚠️ Auth service não inicializado: {e}")
+        # Criar mock para evitar erros
+        class MockAuthService:
+            def authenticate(self, cd_usuario, password, cd_multi_empresa):
+                return {
+                    'success': False,
+                    'error': 'Serviço de autenticação não configurado',
+                    'code': 'SERVICE_UNAVAILABLE'
+                }
+            def verify_token(self, token): return None
+            def refresh_token(self, token): return None
+            def log_access(self, *args): pass
+        
+        auth_service = MockAuthService()
