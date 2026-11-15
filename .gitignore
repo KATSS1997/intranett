@@ -1,9 +1,14 @@
 # Dependencies
 backend/__pycache__/
 backend/*.pyc
+**/__pycache__/
+*.py[cod]
+backend/venv/
 backend/.env
+frontend/.env
 frontend/node_modules/
 frontend/dist/
+*.backup
 
 # Logs
 backend/logs/*.log

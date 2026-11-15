@@ -1,67 +1,28 @@
-"""
-Configuração Oracle com suas credenciais
-Caminho: backend/app/config.py
-"""
+# backend/app/config.py
+# --- ARQUIVO DE CONFIGURAÇÃO CENTRALIZADO ---
 
 import os
-import oracledb
-from dataclasses import dataclass
-from typing import Optional
+from dotenv import load_dotenv
 
-@dataclass
-class DatabaseConfig:
-    """Configuração do banco Oracle"""
-    username: str
-    password: str
-    dsn: str
-    
-    # Pool settings
-    pool_min: int = 2
-    pool_max: int = 10
-    pool_increment: int = 1
-    
-    # Connection settings
-    encoding: str = "UTF-8"
-    timeout: int = 30
-    
-    @classmethod
-    def from_env(cls) -> 'DatabaseConfig':
-        """Carrega configurações (suas credenciais como padrão)"""
-        return cls(
-            username=os.getenv('DB_USER', 'dbamv'),
-            password=os.getenv('DB_PASSWORD', 'dbamv'),
-            dsn=os.getenv('DB_DSN', '192.168.0.9:1521/SMLMV'),
-            pool_min=int(os.getenv('ORACLE_POOL_MIN', 2)),
-            pool_max=int(os.getenv('ORACLE_POOL_MAX', 10)),
-            timeout=int(os.getenv('ORACLE_TIMEOUT', 30))
-        )
-    
-    def validate(self) -> None:
-        """Valida configurações"""
-        if not self.username:
-            raise ValueError("DB_USER é obrigatório")
-        if not self.password:
-            raise ValueError("DB_PASSWORD é obrigatório")
-        if not self.dsn:
-            raise ValueError("DB_DSN é obrigatório")
+# Carrega as variáveis de ambiente do arquivo .env na raiz do backend
+load_dotenv()
 
-@dataclass 
-class AppConfig:
-    """Configurações da aplicação"""
-    secret_key: str
-    jwt_expiration_hours: int = 24
-    debug: bool = False
+class Config:
+    """
+    Configurações base da aplicação.
+    Lê variáveis de um arquivo .env para segurança e flexibilidade.
+    """
+    # Chave secreta para assinar tokens JWT e sessões.
+    # É crucial que seja secreta e complexa em produção.
+    SECRET_KEY = os.getenv('SECRET_KEY', 'uma-chave-secreta-padrao-para-desenvolvimento')
     
-    # Logging
-    log_level: str = "INFO"
-    log_file: str = "logs/app.log"
+    # Configurações do Banco de Dados Oracle
+    ORACLE_USER = os.getenv('ORACLE_USER')
+    ORACLE_PASSWORD = os.getenv('ORACLE_PASSWORD')
+    ORACLE_DSN = os.getenv('ORACLE_DSN')
     
-    @classmethod
-    def from_env(cls) -> 'AppConfig':
-        return cls(
-            secret_key=os.getenv('SECRET_KEY', 'dev-secret-change-in-production'),
-            jwt_expiration_hours=int(os.getenv('JWT_EXPIRATION_HOURS', 24)),
-            debug=os.getenv('FLASK_ENV') == 'development',
-            log_level=os.getenv('LOG_LEVEL', 'INFO'),
-            log_file=os.getenv('LOG_FILE', 'logs/app.log')
-        )
+    # Configurações do Token JWT
+    JWT_EXPIRATION_DAYS = int(os.getenv('JWT_EXPIRATION_DAYS', 1))
+
+    # URL da API externa para autenticação
+    BALEIA_API_URL = os.getenv('BALEIA_API_URL', "http://172.40.0.18:8081/baleia_apis/auth/login")
